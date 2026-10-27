@@ -59,6 +59,14 @@
   .primary{width:100%;padding:15px;border-radius:14px;background:var(--orange);color:#000;font-weight:800;font-size:17px;letter-spacing:1px}
   .primary:disabled{opacity:.35}
   .primary:active:not(:disabled){transform:scale(.98)}
+  .authLink{margin-top:16px;color:var(--muted);font-size:14px}
+  .textBtn{background:transparent;color:var(--orange);font-weight:800;padding:8px}
+  .remember{display:flex;align-items:center;justify-content:center;gap:9px;color:var(--muted);font-size:13px;margin:0 0 16px}
+  .remember input{accent-color:var(--orange);width:17px;height:17px}
+  .authFields{display:flex;flex-direction:column;gap:12px;margin-bottom:14px}
+  .lobbyActions{display:flex;align-items:center;gap:6px;margin-left:auto}
+  .smallBtn{background:var(--panel2);color:var(--white);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:12px;font-weight:700}
+  .smallBtn.orange{color:var(--orange);border-color:var(--orange)}
 
   /* ---------- Lobby ---------- */
   header.top{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
@@ -127,15 +135,36 @@
   <button id="retryBtn">Retry</button>
 </section>
 
-<!-- 2. Name registration -->
+<!-- 2. Login -->
+<section class="screen" id="login">
+  <div class="card">
+    <img src="logo.svg" alt="BUKCHAT logo">
+    <h1><b>BUK</b>CHAT</h1>
+    <p>Log in with your username and password.</p>
+    <div class="authFields">
+      <input class="field" id="loginName" maxlength="15" placeholder="Username" autocomplete="username" autocapitalize="off" spellcheck="false">
+      <input class="field" id="loginPassword" type="password" placeholder="Password" autocomplete="current-password">
+    </div>
+    <label class="remember"><input id="rememberMe" type="checkbox" checked> Remember me on this device</label>
+    <button class="primary" id="loginBtn">LOG IN</button>
+    <div class="authLink">New to BUKCHAT? <button class="textBtn" id="showRegisterBtn">Create account</button></div>
+  </div>
+</section>
+
+<!-- 3. Name registration -->
 <section class="screen" id="register">
   <div class="card">
-    <img src="logo.svg" alt="">
+    <img src="logo.svg" alt="BUKCHAT logo">
     <h1><b>BUK</b>CHAT</h1>
-    <p>Choose your name. It must be unique and cannot be changed.</p>
-    <input class="field" id="nameInput" maxlength="15" placeholder="Your name" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <p>Choose a unique username and password. Usernames cannot be changed.</p>
+    <div class="authFields">
+      <input class="field" id="nameInput" maxlength="15" placeholder="Choose username" autocomplete="username" autocapitalize="off" spellcheck="false">
+      <input class="field" id="passwordInput" type="password" placeholder="Create password (6+ characters)" autocomplete="new-password">
+    </div>
     <div id="nameHint">3–15 letters, numbers or _</div>
-    <button class="primary" id="regBtn" disabled>REGISTER</button>
+    <label class="remember"><input id="regRemember" type="checkbox" checked> Remember me on this device</label>
+    <button class="primary" id="regBtn" disabled>CREATE ACCOUNT</button>
+    <div class="authLink">Already registered? <button class="textBtn" id="showLoginBtn">Log in</button></div>
   </div>
 </section>
 
@@ -144,6 +173,10 @@
   <header class="top">
     <img src="logo.svg" alt=""><div class="t"><b>BUK</b>CHAT</div>
     <div class="me">Hi, <strong id="meName"></strong></div>
+    <div class="lobbyActions">
+      <button class="smallBtn orange" id="accountBtn" style="display:none">Add password</button>
+      <button class="smallBtn" id="logoutBtn">Log out</button>
+    </div>
   </header>
   <div class="body">
     <div class="label">CHATROOMS</div>
@@ -151,11 +184,11 @@
       <div class="ic">💬</div>
       <div>
         <div class="nm">Chatroom1</div>
-        <div class="sub"><span class="dot" id="roomDot"></span><span id="roomCount">0 / 10 online</span></div>
+        <div class="sub"><span class="dot" id="roomDot"></span><span id="roomCount">0 / 50 online</span></div>
       </div>
       <div class="go">›</div>
     </button>
-    <div class="note">Maximum 10 members at a time</div>
+    <div class="note">Maximum 50 members at a time</div>
   </div>
 </section>
 
@@ -164,7 +197,7 @@
   <header class="chatTop">
     <button class="iconBtn" id="backBtn" aria-label="Leave">‹</button>
     <div class="ct"><div class="n">Chatroom1</div><div class="s" id="chatSub">connecting…</div></div>
-    <button class="pill" id="membersBtn">👥 <span id="memCount">0/10</span></button>
+    <button class="pill" id="membersBtn">👥 <span id="memCount">0/50</span></button>
   </header>
   <div id="msgs"></div>
   <form id="sendForm" autocomplete="off">
