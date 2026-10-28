@@ -314,24 +314,14 @@ async function claimSlot() {
 
 function openChat() {
   inRoom = true;
-  chatStartTime = Date.now();
+  chatStartTime = 0;
   if (lobbyUnsub) {
     lobbyUnsub();
     lobbyUnsub = null;
   }
   show("chat");
   $("msgs").innerHTML = "";
-  const greetings = [
-  "👋 Hey there! Glad you're here. 😊",
-  "🌟 Welcome! Hope you're having a great day!",
-  "😎 Hey! Make yourself comfortable.",
-  "😂 New face detected. Vibe check pending!",
-  "⚡ Fresh energy just arrived. What's the vibe?",
-  "☕ Relax, take a breath, and enjoy the conversation.",
-  "🔥 Welcome in! Good conversations start with one message.",
-  "🌈 Sending good vibes your way. Glad you're here!"
-];
-addSystem(greetings[Math.floor(Math.random() * greetings.length)]);
+  
   history.pushState({ chat: true }, "");
 
   unsubs.push(onValue(ref(db, ROOM + "/slots"), async (snap) => {
@@ -360,7 +350,10 @@ addSystem(greetings[Math.floor(Math.random() * greetings.length)]);
   }));
 
   const q = query(ref(db, ROOM + "/messages"), limitToLast(100));
- unsubs.push(onChildAdded(q, (snap) => addMessage(snap.val())));
+ unsubs.push(onChildAdded(q, (snap) => {
+  const message = snap.val();
+  if (message) addMessage(message);
+}));
 
   unsubs.push(onValue(ref(db, ".info/connected"), async (s) => {
     if (s.val() === true && inRoom) {
