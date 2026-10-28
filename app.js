@@ -314,7 +314,7 @@ async function claimSlot() {
 
 function openChat() {
   inRoom = true;
-  chatStartTime = 0;
+  chatStartTime = Date.now();
   if (lobbyUnsub) {
     lobbyUnsub();
     lobbyUnsub = null;
