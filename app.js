@@ -361,10 +361,7 @@ addSystem(greetings[Math.floor(Math.random() * greetings.length)]);
 
   const q = query(ref(db, ROOM + "/messages"), limitToLast(100));
 unsubs.push(onChildAdded(q, (snap) => {
-  const message = snap.val();
-  if (message && message.ts >= chatStartTime) {
-    addMessage(message);
-  }
+  addMessage(snap.val());
 }));
 
   unsubs.push(onValue(ref(db, ".info/connected"), async (s) => {
