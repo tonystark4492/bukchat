@@ -2,7 +2,8 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/fireba
 import {
   getAuth, onAuthStateChanged, EmailAuthProvider, linkWithCredential,
   signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
-  setPersistence, browserLocalPersistence, browserSessionPersistence
+  setPersistence, browserLocalPersistence, browserSessionPersistence,
+  reauthenticateWithCredential, deleteUser
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import {
   getDatabase, ref, get, set, push, onValue, onChildAdded, remove,
@@ -257,7 +258,7 @@ $("loginPassword").addEventListener("keydown", (e) => {
   if (e.key === "Enter") $("loginBtn").click();
 });
 
-$("logoutBtn").onclick = async () => {
+async function doLogout() {
   if (inRoom) await leaveChat(false);
   if (lobbyUnsub) {
     lobbyUnsub();
@@ -272,14 +273,12 @@ $("logoutBtn").onclick = async () => {
   } catch (e) {
     toast("Couldn't log out. Try again.");
   }
-};
-$("accountBtn").onclick = () => enterRegister(true);
+}
+function doAddPassword() { enterRegister(true); }
 
 function enterLobby() {
   show("lobby");
   $("meName").textContent = myName;
-  $("accountBtn").style.display =
-    auth.currentUser && auth.currentUser.isAnonymous ? "inline-block" : "none";
   if (lobbyUnsub) lobbyUnsub();
   lobbyUnsub = onValue(ref(db, ROOM + "/slots"), (snap) => {
     const n = snap.exists() ? Object.keys(snap.val()).length : 0;
@@ -505,11 +504,129 @@ $("backBtn").onclick = () => {
   if (inRoom) history.back();
 };
 window.addEventListener("popstate", () => {
+  if (settingsOpen) { closeSettings(); return; }
   if (inRoom) leaveChat(true);
 });
 $("membersBtn").onclick = () => $("sheet").classList.add("open");
 $("sheet").onclick = (e) => {
   if (e.target.id === "sheet") $("sheet").classList.remove("open");
 };
+
+// ---------- Colour themes ----------
+const THEMES = ["orange", "red", "pink", "blue", "green", "purple"];
+function applyTheme(t) {
+  if (!THEMES.includes(t)) t = "orange";
+  document.documentElement.setAttribute("data-theme", t);
+  document.querySelectorAll(".sw").forEach((b) => b.classList.toggle("on", b.dataset.t === t));
+}
+document.querySelectorAll(".sw").forEach((b) => {
+  b.onclick = () => {
+    applyTheme(b.dataset.t);
+    try { localStorage.setItem("bukchat-theme", b.dataset.t); } catch (e) {}
+  };
+});
+let savedTheme = null;
+try { savedTheme = localStorage.getItem("bukchat-theme"); } catch (e) {}
+applyTheme(savedTheme);
+
+// ---------- 3-dot menu ----------
+function openMenu(btn, items) {
+  const menu = $("menu");
+  menu.innerHTML = "";
+  items.forEach((it) => {
+    const b = document.createElement("button");
+    b.textContent = it.label;
+    if (it.danger) b.className = "danger";
+    b.onclick = () => { closeMenu(); it.fn(); };
+    menu.append(b);
+  });
+  const r = btn.getBoundingClientRect();
+  menu.style.top = r.bottom + 6 + "px";
+  menu.style.right = Math.max(8, window.innerWidth - r.right) + "px";
+  $("menuShade").classList.add("open");
+}
+function closeMenu() { $("menuShade").classList.remove("open"); }
+$("menuShade").onclick = (e) => { if (e.target.id === "menuShade") closeMenu(); };
+
+$("lobbyMenuBtn").onclick = () => {
+  const items = [{ label: "⚙️  Settings", fn: openSettings }];
+  if (auth.currentUser && auth.currentUser.isAnonymous) {
+    items.push({ label: "🔑  Add password", fn: doAddPassword });
+  }
+  items.push({ label: "Log out", fn: doLogout });
+  openMenu($("lobbyMenuBtn"), items);
+};
+$("chatMenuBtn").onclick = () =>
+  openMenu($("chatMenuBtn"), [{ label: "⚙️  Settings", fn: openSettings }]);
+
+// ---------- Settings screen ----------
+let settingsOpen = false, settingsReturn = "lobby";
+function openSettings() {
+  const active = document.querySelector(".screen.active");
+  settingsReturn = active && active.id !== "settings" ? active.id : "lobby";
+  $("setName").textContent = myName || "";
+  settingsOpen = true;
+  history.pushState({ settings: true }, "");
+  show("settings");
+}
+function closeSettings() {
+  settingsOpen = false;
+  show(settingsReturn);
+}
+$("settingsBack").onclick = () => history.back();
+
+// ---------- Delete account ----------
+function closeConfirm() {
+  $("confirmSheet").classList.remove("open");
+  $("delPassword").value = "";
+  $("delConfirm").disabled = false;
+}
+$("deleteBtn").onclick = () => {
+  if (auth.currentUser && auth.currentUser.isAnonymous) {
+    toast("Add a password first (⋮ menu → Add password), then you can delete your account.");
+    return;
+  }
+  $("confirmSheet").classList.add("open");
+  $("delPassword").focus();
+};
+$("delCancel").onclick = closeConfirm;
+
+$("delConfirm").onclick = async () => {
+  const pw = $("delPassword").value;
+  if (!pw) { toast("Enter your password to confirm."); return; }
+  $("delConfirm").disabled = true;
+
+  // 1) Prove it is really the owner (Firebase requires a fresh login for this).
+  try {
+    await reauthenticateWithCredential(
+      auth.currentUser, EmailAuthProvider.credential(usernameEmail(myName), pw));
+  } catch (e) {
+    toast("Wrong password.");
+    $("delConfirm").disabled = false;
+    return;
+  }
+
+  // 2) Remove this user's data, then the login itself. Chat messages are kept.
+  try {
+    if (inRoom) await leaveChat(false);
+    const me = uid, key = myName.toLowerCase(), mem = ROOM + "/members/" + me;
+    await remove(ref(db, mem + "/since"));
+    await remove(ref(db, mem + "/greeted"));
+    await remove(ref(db, "names/" + key));
+    await remove(ref(db, "users/" + me));
+    await deleteUser(auth.currentUser);
+
+    if (lobbyUnsub) { lobbyUnsub(); lobbyUnsub = null; }
+    uid = null; myName = null; mySlot = null;
+    settingsOpen = false;
+    closeConfirm();
+    enterLogin();
+    toast("Your account was deleted.");
+  } catch (e) {
+    toast("Couldn't finish deleting. Please try again.");
+    $("delConfirm").disabled = false;
+  }
+};
+
 
 boot();
