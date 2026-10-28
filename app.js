@@ -6,7 +6,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import {
   getDatabase, ref, get, set, push, onValue, onChildAdded, remove,
-  onDisconnect, serverTimestamp, query, limitToLast
+  onDisconnect, serverTimestamp, query, limitToLast, orderByChild, startAt
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
 import { firebaseConfig } from "./config.js";
 
@@ -37,7 +37,6 @@ if ("serviceWorker" in navigator) {
 
 let auth, db, uid = null, myName = null, mySlot = null;
 let inRoom = false, unsubs = [], lobbyUnsub = null;
-let chatStartTime = 0;
 const nameCache = {};
 const splashDone = new Promise((r) => setTimeout(r, 2000));
 
@@ -206,6 +205,10 @@ $("regBtn").onclick = async () => {
       name: v, joined: serverTimestamp()
     });
     myName = v;
+    // Remember this new member's joining point (used to hide older chat history).
+    try {
+      await set(ref(db, ROOM + "/members/" + uid + "/since"), serverTimestamp());
+    } catch (e) { /* not fatal: it is created again when the room is first opened */ }
     enterLobby();
   } catch (e) {
     const code = String(e?.code || "");
@@ -285,15 +288,53 @@ function enterLobby() {
   });
 }
 
+// Each member has a private record at chatroom1/members/<uid>:
+//   since   = the moment their chat history starts (0 = everything)
+//   greeted = true once the welcome message has been shown
+async function loadMembership() {
+  const base = ROOM + "/members/" + uid;
+  let snap = await get(ref(db, base));
+  let since = snap.child("since").val();
+  let greeted = snap.child("greeted").val() === true;
+
+  if (since === null) {
+    // No record yet. Accounts made before this update are "existing" users and
+    // keep their whole history. The database rules only allow since = 0 for them.
+    try {
+      await set(ref(db, base + "/since"), 0);
+      since = 0;
+      try { await set(ref(db, base + "/greeted"), true); greeted = true; } catch (e) {}
+    } catch (e) {
+      if (String(e?.code || e).toUpperCase().includes("PERMISSION")) {
+        // Brand-new account whose record was not created at sign-up.
+        await set(ref(db, base + "/since"), serverTimestamp());
+        snap = await get(ref(db, base + "/since"));
+        since = snap.val();
+      } else {
+        throw e; // network problem: do not guess, let the caller retry
+      }
+    }
+  }
+  return { since: Number(since) || 0, greeted };
+}
+
 $("roomBtn").onclick = async () => {
   $("roomBtn").disabled = true;
+  let membership;
+  try {
+    membership = await withTimeout(loadMembership(), 12000);
+  } catch (e) {
+    $("roomBtn").disabled = false;
+    toast("Couldn't open the chat. Check your connection and try again.");
+    return;
+  }
   const ok = await claimSlot();
   $("roomBtn").disabled = false;
   if (!ok) {
-    toast("Chatroom1 is full (50/50). Try again later.");
+    toast("Chatroom1 is full (" + MAX_MEMBERS + "/" + MAX_MEMBERS + "). Try again later.");
     return;
   }
-  openChat();
+  openChat(membership);
 };
 
 async function claimSlot() {
@@ -312,26 +353,30 @@ async function claimSlot() {
   return false;
 }
 
-function openChat() {
+function openChat(membership) {
   inRoom = true;
-  chatStartTime = Date.now();
   if (lobbyUnsub) {
     lobbyUnsub();
     lobbyUnsub = null;
   }
   show("chat");
   $("msgs").innerHTML = "";
-  const greetings = [
-  "👋 Hey there! Glad you're here. 😊",
-  "🌟 Welcome! Hope you're having a great day!",
-  "😎 Hey! Make yourself comfortable.",
-  "😂 New face detected. Vibe check pending!",
-  "⚡ Fresh energy just arrived. What's the vibe?",
-  "🌑 Relax, take a breath, and enjoy the conversation.",
-  "🔥 Welcome in! Good conversations start with one message.",
-  "🌈 Sending good vibes your way. Glad you're here!"
-];
-addSystem(greetings[Math.floor(Math.random() * greetings.length)]);
+  if (!membership.greeted) {
+    const greetings = [
+      "👋 Hey there! Glad you're here. 😊",
+      "🌟 Welcome! Hope you're having a great day!",
+      "😎 Hey! Make yourself comfortable.",
+      "😂 New face detected. Vibe check pending!",
+      "⚡ Fresh energy just arrived. What's the vibe?",
+      "🌑 Relax, take a breath, and enjoy the conversation.",
+      "🔥 Welcome in! Good conversations start with one message.",
+      "🌈 Sending good vibes your way. Glad you're here!"
+    ];
+    addSystem(greetings[Math.floor(Math.random() * greetings.length)]);
+    membership.greeted = true;
+    // Shown only once per account (not saved as a chat message).
+    set(ref(db, ROOM + "/members/" + uid + "/greeted"), true).catch(() => {});
+  }
   history.pushState({ chat: true }, "");
 
   unsubs.push(onValue(ref(db, ROOM + "/slots"), async (snap) => {
@@ -359,10 +404,16 @@ addSystem(greetings[Math.floor(Math.random() * greetings.length)]);
     });
   }));
 
-  const q = query(ref(db, ROOM + "/messages"), limitToLast(100));
-unsubs.push(onChildAdded(q, (snap) => {
-  addMessage(snap.val());
-}));
+  // Only messages from this member's joining point onward, newest 100 of those.
+  const q = query(
+    ref(db, ROOM + "/messages"),
+    orderByChild("ts"),
+    startAt(membership.since),
+    limitToLast(100)
+  );
+  unsubs.push(onChildAdded(q, (snap) => {
+    addMessage(snap.val());
+  }));
 
   unsubs.push(onValue(ref(db, ".info/connected"), async (s) => {
     if (s.val() === true && inRoom) {
