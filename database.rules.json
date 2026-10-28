@@ -27,10 +27,25 @@
         ".read": "auth != null",
         "$slot": {
           ".write": "auth != null && root.child('users/' + auth.uid).exists() && ((!data.exists() && newData.val() === auth.uid) || data.val() === auth.uid)",
-          ".validate": "$slot.matches(/^[0-9]$/) && (!newData.exists() || newData.val() === auth.uid)"
+          ".validate": "$slot.matches(/^([0-9]|[1-4][0-9])$/) && (!newData.exists() || newData.val() === auth.uid)"
+        }
+      },
+      "members": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          "since": {
+            ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('users/' + auth.uid).exists()",
+            ".validate": "newData.isNumber() && (newData.val() === now || (newData.val() === 0 && root.child('users/' + auth.uid + '/joined').val() < 1793212559664))"
+          },
+          "greeted": {
+            ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('users/' + auth.uid).exists()",
+            ".validate": "newData.val() === true"
+          },
+          "$other": { ".validate": false }
         }
       },
       "messages": {
+        ".indexOn": ["ts"],
         ".read": "auth != null && root.child('users/' + auth.uid).exists()",
         "$msg": {
           ".write": "auth != null && root.child('users/' + auth.uid).exists() && !data.exists()",
