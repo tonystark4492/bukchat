@@ -6,7 +6,7 @@
     "names": {
       "$name": {
         ".read": true,
-        ".write": "auth != null && !root.child('users/' + auth.uid).exists() && !data.exists() && newData.val() === auth.uid",
+        ".write": "auth != null && ((!root.child('users/' + auth.uid).exists() && !data.exists() && newData.val() === auth.uid) || (!newData.exists() && (!data.exists() || data.val() === auth.uid)))",
         ".validate": "$name.matches(/^[a-z0-9_]{3,15}$/) && newData.isString()"
       }
     },
@@ -14,7 +14,7 @@
     "users": {
       "$uid": {
         ".read": "auth != null",
-        ".write": "auth != null && auth.uid === $uid && !data.exists()",
+        ".write": "auth != null && auth.uid === $uid && (!data.exists() || !newData.exists())",
         ".validate": "newData.hasChildren(['name', 'joined']) && newData.child('name').isString() && newData.child('name').val().matches(/^[A-Za-z0-9_]{3,15}$/) && root.child('names/' + newData.child('name').val().toLowerCase()).val() === auth.uid && newData.child('joined').val() === now",
         "name": {},
         "joined": {},
@@ -34,11 +34,11 @@
         "$uid": {
           ".read": "auth != null && auth.uid === $uid",
           "since": {
-            ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('users/' + auth.uid).exists()",
+            ".write": "auth != null && auth.uid === $uid && ((!data.exists() && root.child('users/' + auth.uid).exists()) || !newData.exists())",
             ".validate": "newData.isNumber() && (newData.val() === now || (newData.val() === 0 && root.child('users/' + auth.uid + '/joined').val() < 1793212559664))"
           },
           "greeted": {
-            ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('users/' + auth.uid).exists()",
+            ".write": "auth != null && auth.uid === $uid && ((!data.exists() && root.child('users/' + auth.uid).exists()) || !newData.exists())",
             ".validate": "newData.val() === true"
           },
           "$other": { ".validate": false }
