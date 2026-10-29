@@ -538,10 +538,46 @@ function addMessage(m, key) {
   if (nearBottom || mine) box.scrollTop = box.scrollHeight;
 }
 
+// ---------- Send sound (made in code, no sound file needed) ----------
+let soundEnabled = true;
+try { soundEnabled = localStorage.getItem("bukchat-sound") !== "off"; } catch (e) {}
+let audioCtx = null;
+function playSendSound() {
+  if (!soundEnabled) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = audioCtx;
+    if (ctx.state === "suspended") ctx.resume();
+    const t = ctx.currentTime;
+    const tone = (type, f1, f2, start, dur, vol) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = type;
+      o.frequency.setValueAtTime(f1, t + start);
+      o.frequency.exponentialRampToValueAtTime(f2, t + start + dur * 0.6);
+      g.gain.setValueAtTime(0.0001, t + start);
+      g.gain.exponentialRampToValueAtTime(vol, t + start + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + start + dur);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(t + start); o.stop(t + start + dur + 0.02);
+    };
+    tone("sine", 420, 900, 0, 0.17, 0.28);      // soft rising "bloop"
+    tone("triangle", 1350, 1700, 0.06, 0.12, 0.07); // tiny sparkle on top
+  } catch (e) {}
+}
+function renderSoundBtn() { $("soundToggle").textContent = soundEnabled ? "On" : "Off"; }
+$("soundToggle").onclick = () => {
+  soundEnabled = !soundEnabled;
+  try { localStorage.setItem("bukchat-sound", soundEnabled ? "on" : "off"); } catch (e) {}
+  renderSoundBtn();
+  playSendSound();
+};
+renderSoundBtn();
+
 $("sendForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = $("msgInput").value.trim();
   if (!text) return;
+  playSendSound();
   $("msgInput").value = "";
   const msgRef = push(ref(db, ROOM + "/messages"));
   const key = msgRef.key;
@@ -580,8 +616,23 @@ async function leaveChat(fromPop) {
   enterLobby();
 }
 
+// Back button. In the installed Android app we handle it ourselves (so it never
+// drops to the phone's home screen from a chat); in a browser we use history.
+const CapApp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+function goBack() {
+  if ($("menuShade").classList.contains("open")) { closeMenu(); return; }
+  for (const id of ["confirmSheet", "clearSheet", "sheet"]) {
+    if ($(id).classList.contains("open")) { $(id).classList.remove("open"); return; }
+  }
+  if (settingsOpen) { closeSettings(); return; }
+  if (inRoom) { leaveChat(); return; }
+  // On the lobby / login screens: send the app to the background like other apps.
+  if (CapApp) { if (CapApp.minimizeApp) CapApp.minimizeApp(); else if (CapApp.exitApp) CapApp.exitApp(); }
+}
+if (CapApp && CapApp.addListener) CapApp.addListener("backButton", goBack);
 $("backBtn").onclick = () => {
-  if (inRoom) history.back();
+  if (!inRoom) return;
+  if (CapApp) leaveChat(); else history.back();
 };
 window.addEventListener("popstate", () => {
   if (settingsOpen) { closeSettings(); return; }
@@ -656,7 +707,7 @@ function closeSettings() {
   settingsOpen = false;
   show(settingsReturn);
 }
-$("settingsBack").onclick = () => history.back();
+$("settingsBack").onclick = () => { if (CapApp) closeSettings(); else history.back(); };
 
 
 // ---------- Delete chat history (clear for me only) ----------
