@@ -330,6 +330,7 @@ async function loadMembership(room) {
   let snap = await get(ref(db, base));
   let since = snap.child("since").val();
   let greeted = snap.child("greeted").val() === true;
+  const clearedAt = Number(snap.child("clearedAt").val()) || 0;
 
   if (since === null) {
     // No record yet. Accounts made before this update are "existing" users and
@@ -359,7 +360,9 @@ async function loadMembership(room) {
       }
     }
   }
-  return { since: Number(since) || 0, greeted };
+  since = Number(since) || 0;
+  // start = where this member's visible history begins (join point or last "delete history")
+  return { since, greeted, clearedAt, start: Math.max(since, clearedAt) };
 }
 
 async function joinRoom(room, btn) {
@@ -397,6 +400,21 @@ async function claimSlot() {
   }
   mySlot = null;
   return false;
+}
+
+let currentMembership = null, msgOff = null;
+const pendingKeys = new Set();
+
+// Only messages from this member's visible start onward, newest 100 of those.
+function startMessageListener() {
+  if (msgOff) { msgOff(); msgOff = null; }
+  const q = query(
+    ref(db, ROOM + "/messages"),
+    orderByChild("ts"),
+    startAt(currentMembership.start),
+    limitToLast(100)
+  );
+  msgOff = onChildAdded(q, (snap) => addMessage(snap.val(), snap.key));
 }
 
 function openChat(membership) {
@@ -451,16 +469,9 @@ function openChat(membership) {
     });
   }));
 
-  // Only messages from this member's joining point onward, newest 100 of those.
-  const q = query(
-    ref(db, ROOM + "/messages"),
-    orderByChild("ts"),
-    startAt(membership.since),
-    limitToLast(100)
-  );
-  unsubs.push(onChildAdded(q, (snap) => {
-    addMessage(snap.val());
-  }));
+  currentMembership = membership;
+  unsubs.push(() => { if (msgOff) { msgOff(); msgOff = null; } });
+  startMessageListener();
 
   unsubs.push(onValue(ref(db, ".info/connected"), async (s) => {
     if (s.val() === true && inRoom) {
@@ -491,13 +502,21 @@ function addSystem(text) {
   $("msgs").append(d);
 }
 
-function addMessage(m) {
+function fmtTime(ts) {
+  const d = new Date(ts);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (d.toDateString() === new Date().toDateString()) return time;
+  return d.toLocaleDateString([], { day: "numeric", month: "short" }) + ", " + time;
+}
+
+function addMessage(m, key) {
   if (!m || typeof m.text !== "string") return;
   const box = $("msgs");
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
   const mine = m.uid === uid;
   const d = document.createElement("div");
   d.className = "msg " + (mine ? "mine" : "other");
+  if (key) d.dataset.key = key;
   const who = document.createElement("div");
   who.className = "who";
   who.textContent = m.name || "?";
@@ -505,9 +524,14 @@ function addMessage(m) {
   body.textContent = m.text;
   const tm = document.createElement("div");
   tm.className = "tm";
-  tm.textContent = m.ts
-    ? new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : "";
+  tm.textContent = m.ts ? fmtTime(m.ts) : "";
+  if (mine) {
+    // 🕓 = still sending, ✓ = the server has it
+    const tick = document.createElement("span");
+    tick.className = "tick";
+    tick.textContent = pendingKeys.has(key) ? " 🕓" : " ✓";
+    tm.append(tick);
+  }
   d.append(who, body, tm);
   box.append(d);
   if (nearBottom || mine) box.scrollTop = box.scrollHeight;
@@ -518,11 +542,18 @@ $("sendForm").addEventListener("submit", async (e) => {
   const text = $("msgInput").value.trim();
   if (!text) return;
   $("msgInput").value = "";
+  const msgRef = push(ref(db, ROOM + "/messages"));
+  const key = msgRef.key;
+  pendingKeys.add(key);
   try {
-    await push(ref(db, ROOM + "/messages"), {
-      uid, name: myName, text, ts: serverTimestamp()
-    });
+    await set(msgRef, { uid, name: myName, text, ts: serverTimestamp() });
+    pendingKeys.delete(key);
+    const t = document.querySelector('.msg[data-key="' + key + '"] .tick');
+    if (t) t.textContent = " ✓";
   } catch (err) {
+    pendingKeys.delete(key);
+    const el = document.querySelector('.msg[data-key="' + key + '"]');
+    if (el) el.remove();
     toast("Message not sent. Check your connection.");
     $("msgInput").value = text;
   }
@@ -605,7 +636,10 @@ $("lobbyMenuBtn").onclick = () => {
   openMenu($("lobbyMenuBtn"), items);
 };
 $("chatMenuBtn").onclick = () =>
-  openMenu($("chatMenuBtn"), [{ label: "⚙️  Settings", fn: openSettings }]);
+  openMenu($("chatMenuBtn"), [
+    { label: "⚙️  Settings", fn: openSettings },
+    { label: "🗑  Delete chat history", danger: true, fn: askClearThisRoom }
+  ]);
 
 // ---------- Settings screen ----------
 let settingsOpen = false, settingsReturn = "lobby";
@@ -622,6 +656,70 @@ function closeSettings() {
   show(settingsReturn);
 }
 $("settingsBack").onclick = () => history.back();
+
+
+// ---------- Delete chat history (clear for me only) ----------
+// Nothing is removed from the database and other members are not affected.
+// We just remember "I cleared at this moment" and show messages newer than that.
+function askConfirm(title, text, okLabel, onOk) {
+  $("clearTitle").textContent = title;
+  $("clearText").textContent = text;
+  $("clearOk").textContent = okLabel;
+  $("clearOk").disabled = false;
+  $("clearSheet").classList.add("open");
+  $("clearOk").onclick = async () => {
+    $("clearOk").disabled = true;
+    try { await onOk(); } finally { $("clearSheet").classList.remove("open"); }
+  };
+}
+$("clearCancel").onclick = () => $("clearSheet").classList.remove("open");
+
+async function markCleared(room) {
+  const cRef = ref(db, room.id + "/members/" + uid + "/clearedAt");
+  await set(cRef, serverTimestamp());
+  return Number((await get(cRef)).val()) || Date.now();
+}
+function resetChatView(start) {
+  if (!inRoom || !currentMembership) return;
+  currentMembership.start = Math.max(currentMembership.start, start);
+  $("msgs").innerHTML = "";
+  startMessageListener();
+}
+
+function askClearThisRoom() {
+  const room = currentRoom;
+  askConfirm(
+    "Delete " + room.name + " history?",
+    "This clears the " + room.name + " chat history for you only. Other members keep their messages. You will only see new messages from now on.",
+    "Delete history",
+    async () => {
+      try {
+        const start = await markCleared(room);
+        resetChatView(start);
+        toast(room.name + " history deleted.");
+      } catch (e) {
+        toast("Couldn't delete history. Check your connection.");
+      }
+    });
+}
+
+$("clearAllBtn").onclick = () => {
+  askConfirm(
+    "Delete all chat history?",
+    "This clears the history of all " + ROOMS.length + " rooms for you only. Other members keep their messages. You will only see new messages from now on.",
+    "Delete all",
+    async () => {
+      try {
+        for (const room of ROOMS) {
+          const start = await markCleared(room);
+          if (inRoom && room.id === currentRoom.id) resetChatView(start);
+        }
+        toast("All chat history deleted.");
+      } catch (e) {
+        toast("Couldn't finish. Check your connection and try again.");
+      }
+    });
+};
 
 // ---------- Delete account ----------
 function closeConfirm() {
@@ -662,6 +760,7 @@ $("delConfirm").onclick = async () => {
       const mem = room.id + "/members/" + me;
       await remove(ref(db, mem + "/since"));
       await remove(ref(db, mem + "/greeted"));
+      await remove(ref(db, mem + "/clearedAt"));
     }
     await remove(ref(db, "names/" + key));
     await remove(ref(db, "users/" + me));
