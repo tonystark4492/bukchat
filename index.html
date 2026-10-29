@@ -85,6 +85,10 @@
   .label{color:var(--muted);font-size:12px;letter-spacing:2px;margin:0 4px 12px}
   .roomBtn{width:100%;display:flex;align-items:center;gap:16px;padding:20px;border-radius:20px;
     background:linear-gradient(135deg,#1c1c1c,#111);border:2px solid var(--accent);color:var(--white);text-align:left}
+  .roomBtn{margin-bottom:12px}
+  .roomBtn .rt{min-width:0}
+  .roomBtn .desc{font-size:12px;color:var(--muted);margin-top:2px}
+  .roomBtn .nm{font-size:19px}
   .roomBtn:active{transform:scale(.98)}
   .roomBtn .ic{width:54px;height:54px;border-radius:16px;background:var(--accent);color:#000;display:grid;place-items:center;font-size:26px}
   .roomBtn .nm{font-size:22px;font-weight:800}
@@ -99,7 +103,7 @@
   .iconBtn{width:40px;height:40px;border-radius:12px;background:var(--panel2);color:var(--white);font-size:20px;display:grid;place-items:center}
   .iconBtn:active{background:#2c2c2c}
   .ct{flex:1;min-width:0}
-  .ct .n{font-weight:800;font-size:18px}
+  .ct .n{font-weight:800;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ct .s{font-size:12px;color:var(--muted)}
   .pill{padding:8px 12px;border-radius:20px;background:var(--panel2);font-size:13px;color:var(--white);display:flex;align-items:center;gap:6px}
   #msgs{flex:1;overflow-y:auto;padding:14px 12px;display:flex;flex-direction:column;gap:8px;background:#0e0e0e}
@@ -215,15 +219,8 @@
   </header>
   <div class="body">
     <div class="label">CHATROOMS</div>
-    <button class="roomBtn" id="roomBtn">
-      <div class="ic">💬</div>
-      <div>
-        <div class="nm">Chatroom1</div>
-        <div class="sub"><span class="dot" id="roomDot"></span><span id="roomCount">0 / 50 online</span></div>
-      </div>
-      <div class="go">›</div>
-    </button>
-    <div class="note">Maximum 50 members at a time</div>
+    <div id="roomList"></div>
+    <div class="note">Each room holds up to 50 members at a time</div>
   </div>
 </section>
 
@@ -231,7 +228,7 @@
 <section class="screen" id="chat">
   <header class="chatTop">
     <button class="iconBtn" id="backBtn" aria-label="Leave">‹</button>
-    <div class="ct"><div class="n">Chatroom1</div><div class="s" id="chatSub">connecting…</div></div>
+    <div class="ct"><div class="n" id="chatTitle">Chat</div><div class="s" id="chatSub">connecting…</div></div>
     <button class="pill" id="membersBtn">👥 <span id="memCount">0/50</span></button>
     <button class="iconBtn" id="chatMenuBtn" aria-label="Menu">⋮</button>
   </header>
