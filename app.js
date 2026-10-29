@@ -12,7 +12,17 @@ import {
 import { firebaseConfig } from "./config.js";
 
 const MAX_MEMBERS = 50;
-const ROOM = "chatroom1";
+// Rooms. The first one keeps the old database key "chatroom1" so all its
+// existing messages stay exactly where they are; only the display name changed.
+const ROOMS = [
+  { id: "chatroom1",     emoji: "🌐", name: "Global",            desc: "Everyone, everywhere" },
+  { id: "room_desi",     emoji: "🇮🇳", name: "Desi Zone",         desc: "South Asia" },
+  { id: "room_afroarab", emoji: "🌍", name: "Afro-Arab Zone",    desc: "Africa and the Middle East" },
+  { id: "room_americas", emoji: "🌎", name: "Americas Zone",     desc: "North and South America" },
+  { id: "room_asiapacific", emoji: "🌏", name: "Asia-Pacific Zone", desc: "East Asia, Southeast Asia and Oceania" }
+];
+let currentRoom = ROOMS[0];
+let ROOM = currentRoom.id; // database key of the room the user is in
 const $ = (id) => document.getElementById(id);
 
 function show(id) {
@@ -208,7 +218,7 @@ $("regBtn").onclick = async () => {
     myName = v;
     // Remember this new member's joining point (used to hide older chat history).
     try {
-      await set(ref(db, ROOM + "/members/" + uid + "/since"), serverTimestamp());
+      await set(ref(db, ROOMS[0].id + "/members/" + uid + "/since"), serverTimestamp());
     } catch (e) { /* not fatal: it is created again when the room is first opened */ }
     enterLobby();
   } catch (e) {
@@ -276,22 +286,47 @@ async function doLogout() {
 }
 function doAddPassword() { enterRegister(true); }
 
+function renderRooms() {
+  const list = $("roomList");
+  list.innerHTML = "";
+  ROOMS.forEach((room) => {
+    const b = document.createElement("button");
+    b.className = "roomBtn";
+    b.dataset.room = room.id;
+    b.innerHTML =
+      '<div class="ic"></div><div class="rt"><div class="nm"></div>' +
+      '<div class="desc"></div>' +
+      '<div class="sub"><span class="dot"></span><span class="cnt">0 / ' + MAX_MEMBERS + ' online</span></div>' +
+      '</div><div class="go">›</div>';
+    b.querySelector(".ic").textContent = room.emoji;
+    b.querySelector(".nm").textContent = room.name;
+    b.querySelector(".desc").textContent = room.desc;
+    b.onclick = () => joinRoom(room, b);
+    list.append(b);
+  });
+}
+
 function enterLobby() {
   show("lobby");
   $("meName").textContent = myName;
   if (lobbyUnsub) lobbyUnsub();
-  lobbyUnsub = onValue(ref(db, ROOM + "/slots"), (snap) => {
-    const n = snap.exists() ? Object.keys(snap.val()).length : 0;
-    $("roomCount").textContent = n + " / " + MAX_MEMBERS + " online";
-    $("roomDot").classList.toggle("full", n >= MAX_MEMBERS);
-  });
+  renderRooms();
+  const offs = ROOMS.map((room) =>
+    onValue(ref(db, room.id + "/slots"), (snap) => {
+      const n = snap.exists() ? Object.keys(snap.val()).length : 0;
+      const el = document.querySelector('[data-room="' + room.id + '"]');
+      if (!el) return;
+      el.querySelector(".cnt").textContent = n + " / " + MAX_MEMBERS + " online";
+      el.querySelector(".dot").classList.toggle("full", n >= MAX_MEMBERS);
+    }));
+  lobbyUnsub = () => offs.forEach((off) => off());
 }
 
-// Each member has a private record at chatroom1/members/<uid>:
+// Each member has a private record in every room, at <room>/members/<uid>:
 //   since   = the moment their chat history starts (0 = everything)
 //   greeted = true once the welcome message has been shown
-async function loadMembership() {
-  const base = ROOM + "/members/" + uid;
+async function loadMembership(room) {
+  const base = room.id + "/members/" + uid;
   let snap = await get(ref(db, base));
   let since = snap.child("since").val();
   let greeted = snap.child("greeted").val() === true;
@@ -302,13 +337,23 @@ async function loadMembership() {
     try {
       await set(ref(db, base + "/since"), 0);
       since = 0;
-      try { await set(ref(db, base + "/greeted"), true); greeted = true; } catch (e) {}
+      // Only the original room counts as already greeted. Existing users have
+      // never seen the welcome of the new zones, so they get it once there.
+      if (room.id === ROOMS[0].id) {
+        try { await set(ref(db, base + "/greeted"), true); greeted = true; } catch (e) {}
+      }
     } catch (e) {
       if (String(e?.code || e).toUpperCase().includes("PERMISSION")) {
-        // Brand-new account whose record was not created at sign-up.
-        await set(ref(db, base + "/since"), serverTimestamp());
-        snap = await get(ref(db, base + "/since"));
-        since = snap.val();
+        // Newer account: its history starts when the account was created.
+        const sinceRef = ref(db, base + "/since");
+        const j = (await get(ref(db, "users/" + uid + "/joined"))).val();
+        if (typeof j === "number") {
+          await set(sinceRef, j);
+          since = j;
+        } else {
+          await set(sinceRef, serverTimestamp());
+          since = (await get(sinceRef)).val();
+        }
       } else {
         throw e; // network problem: do not guess, let the caller retry
       }
@@ -317,24 +362,26 @@ async function loadMembership() {
   return { since: Number(since) || 0, greeted };
 }
 
-$("roomBtn").onclick = async () => {
-  $("roomBtn").disabled = true;
+async function joinRoom(room, btn) {
+  btn.disabled = true;
+  currentRoom = room;
+  ROOM = room.id;
   let membership;
   try {
-    membership = await withTimeout(loadMembership(), 12000);
+    membership = await withTimeout(loadMembership(room), 12000);
   } catch (e) {
-    $("roomBtn").disabled = false;
+    btn.disabled = false;
     toast("Couldn't open the chat. Check your connection and try again.");
     return;
   }
   const ok = await claimSlot();
-  $("roomBtn").disabled = false;
+  btn.disabled = false;
   if (!ok) {
-    toast("Chatroom1 is full (" + MAX_MEMBERS + "/" + MAX_MEMBERS + "). Try again later.");
+    toast(room.name + " is full (" + MAX_MEMBERS + "/" + MAX_MEMBERS + "). Try again later.");
     return;
   }
   openChat(membership);
-};
+}
 
 async function claimSlot() {
   const order = [...Array(MAX_MEMBERS).keys()];
@@ -359,6 +406,7 @@ function openChat(membership) {
     lobbyUnsub = null;
   }
   show("chat");
+  $("chatTitle").textContent = currentRoom.emoji + " " + currentRoom.name;
   $("msgs").innerHTML = "";
   if (!membership.greeted) {
     const greetings = [
@@ -418,7 +466,7 @@ function openChat(membership) {
     if (s.val() === true && inRoom) {
       const ok = await claimSlot();
       if (!ok) {
-        toast("Chatroom1 became full. You were moved out.");
+        toast(currentRoom.name + " became full. You were moved out.");
         leaveChat(true);
       }
     }
@@ -609,9 +657,12 @@ $("delConfirm").onclick = async () => {
   // 2) Remove this user's data, then the login itself. Chat messages are kept.
   try {
     if (inRoom) await leaveChat(false);
-    const me = uid, key = myName.toLowerCase(), mem = ROOM + "/members/" + me;
-    await remove(ref(db, mem + "/since"));
-    await remove(ref(db, mem + "/greeted"));
+    const me = uid, key = myName.toLowerCase();
+    for (const room of ROOMS) {
+      const mem = room.id + "/members/" + me;
+      await remove(ref(db, mem + "/since"));
+      await remove(ref(db, mem + "/greeted"));
+    }
     await remove(ref(db, "names/" + key));
     await remove(ref(db, "users/" + me));
     await deleteUser(auth.currentUser);
