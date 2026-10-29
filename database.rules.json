@@ -2,7 +2,6 @@
   "rules": {
     ".read": false,
     ".write": false,
-
     "names": {
       "$name": {
         ".read": true,
@@ -10,7 +9,6 @@
         ".validate": "$name.matches(/^[a-z0-9_]{3,15}$/) && newData.isString()"
       }
     },
-
     "users": {
       "$uid": {
         ".read": "auth != null",
@@ -18,10 +16,11 @@
         ".validate": "newData.hasChildren(['name', 'joined']) && newData.child('name').isString() && newData.child('name').val().matches(/^[A-Za-z0-9_]{3,15}$/) && root.child('names/' + newData.child('name').val().toLowerCase()).val() === auth.uid && newData.child('joined').val() === now",
         "name": {},
         "joined": {},
-        "$other": { ".validate": false }
+        "$other": {
+          ".validate": false
+        }
       }
     },
-
     "chatroom1": {
       "slots": {
         ".read": "auth != null",
@@ -35,23 +34,200 @@
           ".read": "auth != null && auth.uid === $uid",
           "since": {
             ".write": "auth != null && auth.uid === $uid && ((!data.exists() && root.child('users/' + auth.uid).exists()) || !newData.exists())",
-            ".validate": "newData.isNumber() && (newData.val() === now || (newData.val() === 0 && root.child('users/' + auth.uid + '/joined').val() < 1793212559664))"
+            ".validate": "newData.isNumber() && (newData.val() === now || newData.val() === root.child('users/' + auth.uid + '/joined').val() || (newData.val() === 0 && root.child('users/' + auth.uid + '/joined').val() < 1793212559664))"
           },
           "greeted": {
             ".write": "auth != null && auth.uid === $uid && ((!data.exists() && root.child('users/' + auth.uid).exists()) || !newData.exists())",
             ".validate": "newData.val() === true"
           },
-          "$other": { ".validate": false }
+          "$other": {
+            ".validate": false
+          }
         }
       },
       "messages": {
-        ".indexOn": ["ts"],
+        ".indexOn": [
+          "ts"
+        ],
         ".read": "auth != null && root.child('users/' + auth.uid).exists()",
         "$msg": {
           ".write": "auth != null && root.child('users/' + auth.uid).exists() && !data.exists()",
           ".validate": "newData.hasChildren(['uid', 'name', 'text', 'ts']) && newData.child('uid').val() === auth.uid && newData.child('name').val() === root.child('users/' + auth.uid + '/name').val() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('ts').val() === now",
-          "uid": {}, "name": {}, "text": {}, "ts": {},
-          "$other": { ".validate": false }
+          "uid": {},
+          "name": {},
+          "text": {},
+          "ts": {},
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
+    },
+    "room_desi": {
+      "slots": {
+        ".read": "auth != null",
+        "$slot": {
+          ".write": "auth != null && root.child('users/' + auth.uid).exists() && ((!data.exists() && newData.val() === auth.uid) || data.val() === auth.uid)",
+          ".validate": "$slot.matches(/^([0-9]|[1-4][0-9])$/) && (!newData.exists() || newData.val() === auth.uid)"
+        }
+      },
+      "members": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          "since": {
+            ".write": "auth != null && auth.uid === $uid && ((!data.exists() && root.child('users/' + auth.uid).exists()) || !newData.exists())",
+            ".validate": "newData.isNumber() && (newData.val() === now || newData.val() === root.child('users/' + auth.uid + '/joined').val() || (newData.val() === 0 && root.child('users/' + auth.uid + '/joined').val() < 1793212559664))"
+          },
+          "greeted": {
+            ".write": "auth != null && auth.uid === $uid && ((!data.exists() && root.child('users/' + auth.uid).exists()) || !newData.exists())",
+            ".validate": "newData.val() === true"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
+      "messages": {
+        ".indexOn": [
+          "ts"
+        ],
+        ".read": "auth != null && root.child('users/' + auth.uid).exists()",
+        "$msg": {
+          ".write": "auth != null && root.child('users/' + auth.uid).exists() && !data.exists()",
+          ".validate": "newData.hasChildren(['uid', 'name', 'text', 'ts']) && newData.child('uid').val() === auth.uid && newData.child('name').val() === root.child('users/' + auth.uid + '/name').val() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('ts').val() === now",
+          "uid": {},
+          "name": {},
+          "text": {},
+          "ts": {},
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
+    },
+    "room_afroarab": {
+      "slots": {
+        ".read": "auth != null",
+        "$slot": {
+          ".write": "auth != null && root.child('users/' + auth.uid).exists() && ((!data.exists() && newData.val() === auth.uid) || data.val() === auth.uid)",
+          ".validate": "$slot.matches(/^([0-9]|[1-4][0-9])$/) && (!newData.exists() || newData.val() === auth.uid)"
+        }
+      },
+      "members": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          "since": {
+            ".write": "auth != null && auth.uid === $uid && ((!data.exists() && root.child('users/' + auth.uid).exists()) || !newData.exists())",
+            ".validate": "newData.isNumber() && (newData.val() === now || newData.val() === root.child('users/' + auth.uid + '/joined').val() || (newData.val() === 0 && root.child('users/' + auth.uid + '/joined').val() < 1793212559664))"
+          },
+          "greeted": {
+            ".write": "auth != null && auth.uid === $uid && ((!data.exists() && root.child('users/' + auth.uid).exists()) || !newData.exists())",
+            ".validate": "newData.val() === true"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
+      "messages": {
+        ".indexOn": [
+          "ts"
+        ],
+        ".read": "auth != null && root.child('users/' + auth.uid).exists()",
+        "$msg": {
+          ".write": "auth != null && root.child('users/' + auth.uid).exists() && !data.exists()",
+          ".validate": "newData.hasChildren(['uid', 'name', 'text', 'ts']) && newData.child('uid').val() === auth.uid && newData.child('name').val() === root.child('users/' + auth.uid + '/name').val() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('ts').val() === now",
+          "uid": {},
+          "name": {},
+          "text": {},
+          "ts": {},
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
+    },
+    "room_americas": {
+      "slots": {
+        ".read": "auth != null",
+        "$slot": {
+          ".write": "auth != null && root.child('users/' + auth.uid).exists() && ((!data.exists() && newData.val() === auth.uid) || data.val() === auth.uid)",
+          ".validate": "$slot.matches(/^([0-9]|[1-4][0-9])$/) && (!newData.exists() || newData.val() === auth.uid)"
+        }
+      },
+      "members": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          "since": {
+            ".write": "auth != null && auth.uid === $uid && ((!data.exists() && root.child('users/' + auth.uid).exists()) || !newData.exists())",
+            ".validate": "newData.isNumber() && (newData.val() === now || newData.val() === root.child('users/' + auth.uid + '/joined').val() || (newData.val() === 0 && root.child('users/' + auth.uid + '/joined').val() < 1793212559664))"
+          },
+          "greeted": {
+            ".write": "auth != null && auth.uid === $uid && ((!data.exists() && root.child('users/' + auth.uid).exists()) || !newData.exists())",
+            ".validate": "newData.val() === true"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
+      "messages": {
+        ".indexOn": [
+          "ts"
+        ],
+        ".read": "auth != null && root.child('users/' + auth.uid).exists()",
+        "$msg": {
+          ".write": "auth != null && root.child('users/' + auth.uid).exists() && !data.exists()",
+          ".validate": "newData.hasChildren(['uid', 'name', 'text', 'ts']) && newData.child('uid').val() === auth.uid && newData.child('name').val() === root.child('users/' + auth.uid + '/name').val() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('ts').val() === now",
+          "uid": {},
+          "name": {},
+          "text": {},
+          "ts": {},
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
+    },
+    "room_asiapacific": {
+      "slots": {
+        ".read": "auth != null",
+        "$slot": {
+          ".write": "auth != null && root.child('users/' + auth.uid).exists() && ((!data.exists() && newData.val() === auth.uid) || data.val() === auth.uid)",
+          ".validate": "$slot.matches(/^([0-9]|[1-4][0-9])$/) && (!newData.exists() || newData.val() === auth.uid)"
+        }
+      },
+      "members": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          "since": {
+            ".write": "auth != null && auth.uid === $uid && ((!data.exists() && root.child('users/' + auth.uid).exists()) || !newData.exists())",
+            ".validate": "newData.isNumber() && (newData.val() === now || newData.val() === root.child('users/' + auth.uid + '/joined').val() || (newData.val() === 0 && root.child('users/' + auth.uid + '/joined').val() < 1793212559664))"
+          },
+          "greeted": {
+            ".write": "auth != null && auth.uid === $uid && ((!data.exists() && root.child('users/' + auth.uid).exists()) || !newData.exists())",
+            ".validate": "newData.val() === true"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
+      "messages": {
+        ".indexOn": [
+          "ts"
+        ],
+        ".read": "auth != null && root.child('users/' + auth.uid).exists()",
+        "$msg": {
+          ".write": "auth != null && root.child('users/' + auth.uid).exists() && !data.exists()",
+          ".validate": "newData.hasChildren(['uid', 'name', 'text', 'ts']) && newData.child('uid').val() === auth.uid && newData.child('name').val() === root.child('users/' + auth.uid + '/name').val() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('ts').val() === now",
+          "uid": {},
+          "name": {},
+          "text": {},
+          "ts": {},
+          "$other": {
+            ".validate": false
+          }
         }
       }
     }
