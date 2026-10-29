@@ -42,6 +42,10 @@
           },
           "$other": {
             ".validate": false
+          },
+          "clearedAt": {
+            ".write": "auth != null && auth.uid === $uid && root.child('users/' + auth.uid).exists()",
+            ".validate": "newData.val() === now"
           }
         }
       },
@@ -84,6 +88,10 @@
           },
           "$other": {
             ".validate": false
+          },
+          "clearedAt": {
+            ".write": "auth != null && auth.uid === $uid && root.child('users/' + auth.uid).exists()",
+            ".validate": "newData.val() === now"
           }
         }
       },
@@ -126,6 +134,10 @@
           },
           "$other": {
             ".validate": false
+          },
+          "clearedAt": {
+            ".write": "auth != null && auth.uid === $uid && root.child('users/' + auth.uid).exists()",
+            ".validate": "newData.val() === now"
           }
         }
       },
@@ -168,6 +180,10 @@
           },
           "$other": {
             ".validate": false
+          },
+          "clearedAt": {
+            ".write": "auth != null && auth.uid === $uid && root.child('users/' + auth.uid).exists()",
+            ".validate": "newData.val() === now"
           }
         }
       },
@@ -210,6 +226,10 @@
           },
           "$other": {
             ".validate": false
+          },
+          "clearedAt": {
+            ".write": "auth != null && auth.uid === $uid && root.child('users/' + auth.uid).exists()",
+            ".validate": "newData.val() === now"
           }
         }
       },
