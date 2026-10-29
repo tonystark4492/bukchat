@@ -7,6 +7,11 @@
 <title>BUKCHAT</title>
 <link rel="manifest" href="manifest.webmanifest">
 <script>try{var t=localStorage.getItem("bukchat-theme");if(t)document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js">
+<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js">
+<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js">
+<link rel="modulepreload" href="app.js">
 <link rel="icon" href="logo.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
 <style>
@@ -21,11 +26,13 @@
   html[data-theme="purple"]{--accent:#A66BFF;--accent2:#c09bff}
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--white);
-    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden;overscroll-behavior:none;-webkit-text-size-adjust:100%}
   .screen{position:fixed;inset:0;display:none;flex-direction:column;height:100dvh;
     padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
-  .screen.active{display:flex}
-  button{font:inherit;cursor:pointer;border:0}
+  .screen.active{display:flex;animation:screenIn .28s cubic-bezier(.2,.8,.2,1) both}
+  @keyframes screenIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+  #splash.active{animation:none}
+  button{font:inherit;cursor:pointer;border:0;touch-action:manipulation;transition:transform .12s ease,background-color .15s ease,opacity .15s ease}
   input{font:inherit}
 
   /* ---------- Splash ---------- */
@@ -52,8 +59,9 @@
   #retryBtn{display:none;margin-top:12px;padding:10px 22px;border-radius:12px;background:var(--accent);color:#000;font-weight:700}
 
   /* ---------- Register ---------- */
-  #register{align-items:center;justify-content:center;padding:24px}
-  .card{width:100%;max-width:380px;background:var(--panel);border:1px solid var(--line);border-radius:24px;padding:28px 24px;text-align:center}
+  #login,#register{padding:24px;overflow-y:auto;overscroll-behavior:contain}
+  #login .card,#register .card{margin:auto}
+  .card{width:100%;max-width:380px;flex:none;background:var(--panel);border:1px solid var(--line);border-radius:24px;padding:28px 24px;text-align:center}
   .card img{width:84px;height:84px;border-radius:20px}
   .card h1{margin:12px 0 4px;font-size:26px;letter-spacing:3px}
   .card h1 b{color:var(--accent)}
@@ -81,7 +89,7 @@
   header.top .t b{color:var(--accent)}
   header.top .me{margin-left:auto;font-size:13px;color:var(--muted)}
   header.top .me strong{color:var(--white)}
-  #lobby .body{flex:1;overflow:auto;padding:22px 16px}
+  #lobby .body{flex:1;overflow:auto;overscroll-behavior:contain;padding:22px 16px}
   .label{color:var(--muted);font-size:12px;letter-spacing:2px;margin:0 4px 12px}
   .roomBtn{width:100%;display:flex;align-items:center;gap:16px;padding:20px;border-radius:20px;
     background:linear-gradient(135deg,#1c1c1c,#111);border:2px solid var(--accent);color:var(--white);text-align:left}
@@ -106,9 +114,10 @@
   .ct .n{font-weight:800;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ct .s{font-size:12px;color:var(--muted)}
   .pill{padding:8px 12px;border-radius:20px;background:var(--panel2);font-size:13px;color:var(--white);display:flex;align-items:center;gap:6px}
-  #msgs{flex:1;overflow-y:auto;padding:14px 12px;display:flex;flex-direction:column;gap:8px;background:#0e0e0e}
+  #msgs{flex:1;overflow-y:auto;overscroll-behavior:contain;contain:content;padding:14px 12px;display:flex;flex-direction:column;gap:8px;background:#0e0e0e}
   .sys{align-self:center;font-size:12px;color:var(--muted);padding:4px 12px;background:var(--panel);border-radius:12px}
-  .msg{max-width:80%;padding:9px 13px 7px;border-radius:18px;word-wrap:break-word;overflow-wrap:anywhere;white-space:pre-wrap;line-height:1.35}
+  .msg{animation:msgIn .18s ease-out both;max-width:80%;padding:9px 13px 7px;border-radius:18px;word-wrap:break-word;overflow-wrap:anywhere;white-space:pre-wrap;line-height:1.35}
+  @keyframes msgIn{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}
   .msg .who{font-size:12px;font-weight:800;color:var(--accent);margin-bottom:2px}
   .msg .tm{font-size:10px;opacity:.6;text-align:right;margin-top:3px}
   .msg.other{align-self:flex-start;background:var(--panel2);border-bottom-left-radius:5px}
@@ -121,7 +130,11 @@
 
   /* Members sheet */
   #sheet{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:flex-end;z-index:5}
-  #sheet.open{display:flex}
+  #sheet.open{display:flex;animation:fadeIn .2s ease both}
+  #sheet.open .inner{animation:slideUp .28s cubic-bezier(.2,.8,.2,1) both}
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+  @keyframes slideUp{from{transform:translateY(40px)}to{transform:none}}
+  @keyframes popIn{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
   #sheet .inner{width:100%;max-height:70dvh;overflow:auto;background:var(--panel);border-radius:24px 24px 0 0;padding:20px 20px calc(20px + env(safe-area-inset-bottom));border-top:2px solid var(--accent)}
   #sheet h3{margin:0 0 14px}
   #sheet li{list-style:none;display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}
@@ -132,6 +145,7 @@
   /* ---------- Menu (3 dots) ---------- */
   #menuShade{position:fixed;inset:0;display:none;z-index:20}
   #menuShade.open{display:block}
+  #menuShade.open #menu{animation:popIn .16s ease-out both;transform-origin:top right}
   #menu{position:absolute;min-width:190px;background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:6px;box-shadow:0 10px 30px rgba(0,0,0,.6)}
   #menu button{display:block;width:100%;text-align:left;background:transparent;color:var(--white);padding:12px 14px;border-radius:10px;font-size:15px;font-weight:600}
   #menu button:active{background:#2c2c2c}
@@ -151,7 +165,8 @@
   .dangerBtn{width:100%;padding:14px;border-radius:14px;background:transparent;border:2px solid var(--danger);color:var(--danger);font-weight:800;font-size:16px}
   .dangerBtn:active{background:rgba(255,77,77,.12)}
   #confirmSheet,#clearSheet{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;z-index:30;padding:20px}
-  #confirmSheet.open,#clearSheet.open{display:flex}
+  #confirmSheet.open,#clearSheet.open{display:flex;animation:fadeIn .2s ease both}
+  #confirmSheet.open .box,#clearSheet.open .box{animation:popIn .2s ease-out both}
   #confirmSheet .box,#clearSheet .box{width:100%;max-width:360px;background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:22px}
   #confirmSheet h3,#clearSheet h3{margin:0 0 8px;color:var(--danger)}
   #confirmSheet p,#clearSheet p{margin:0 0 14px;color:var(--muted);font-size:14px;line-height:1.4}
@@ -165,6 +180,10 @@
   #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%) translateY(20px);background:#222;border:1px solid var(--accent);
     color:var(--white);padding:12px 18px;border-radius:14px;font-size:14px;opacity:0;pointer-events:none;transition:.25s;z-index:10;max-width:88%;text-align:center}
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  @media (prefers-reduced-motion:reduce){
+    .screen.active,.msg,#sheet.open,#sheet.open .inner,#menuShade.open #menu,#confirmSheet.open,#clearSheet.open,#confirmSheet.open .box,#clearSheet.open .box{animation:none!important}
+    button{transition:none}
+  }
 </style>
 </head>
 <body>
