@@ -150,16 +150,17 @@
   .acctRow span{color:var(--muted)}
   .dangerBtn{width:100%;padding:14px;border-radius:14px;background:transparent;border:2px solid var(--danger);color:var(--danger);font-weight:800;font-size:16px}
   .dangerBtn:active{background:rgba(255,77,77,.12)}
-  #confirmSheet{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;z-index:30;padding:20px}
-  #confirmSheet.open{display:flex}
-  #confirmSheet .box{width:100%;max-width:360px;background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:22px}
-  #confirmSheet h3{margin:0 0 8px;color:var(--danger)}
-  #confirmSheet p{margin:0 0 14px;color:var(--muted);font-size:14px;line-height:1.4}
-  #confirmSheet .row{display:flex;gap:10px;margin-top:14px}
-  #confirmSheet .row button{flex:1;padding:13px;border-radius:12px;font-weight:800}
-  #delCancel{background:var(--panel2);color:var(--white)}
-  #delConfirm{background:var(--danger);color:#000}
-  #delConfirm:disabled{opacity:.4}
+  #confirmSheet,#clearSheet{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;z-index:30;padding:20px}
+  #confirmSheet.open,#clearSheet.open{display:flex}
+  #confirmSheet .box,#clearSheet .box{width:100%;max-width:360px;background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:22px}
+  #confirmSheet h3,#clearSheet h3{margin:0 0 8px;color:var(--danger)}
+  #confirmSheet p,#clearSheet p{margin:0 0 14px;color:var(--muted);font-size:14px;line-height:1.4}
+  #confirmSheet .row,#clearSheet .row{display:flex;gap:10px;margin-top:14px}
+  #confirmSheet .row button,#clearSheet .row button{flex:1;padding:13px;border-radius:12px;font-weight:800}
+  #delCancel,#clearCancel{background:var(--panel2);color:var(--white)}
+  #delConfirm,#clearOk{background:var(--danger);color:#000}
+  #delConfirm:disabled,#clearOk:disabled{opacity:.4}
+  .msg .tick{letter-spacing:0}
 
   #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%) translateY(20px);background:#222;border:1px solid var(--accent);
     color:var(--white);padding:12px 18px;border-radius:14px;font-size:14px;opacity:0;pointer-events:none;transition:.25s;z-index:10;max-width:88%;text-align:center}
@@ -255,6 +256,9 @@
       <button class="sw" data-t="green"><i></i>Green</button>
       <button class="sw" data-t="purple"><i></i>Purple</button>
     </div>
+    <div class="label">CHAT HISTORY</div>
+    <button class="dangerBtn" id="clearAllBtn" style="margin-bottom:10px">Delete all chat history</button>
+    <div class="note" style="margin:0 0 26px">Clears your view in every room. Other people keep their messages. To clear one room only, open it and use the ⋮ menu.</div>
     <div class="label">ACCOUNT</div>
     <div class="acctRow"><span>Username</span><strong id="setName"></strong></div>
     <button class="dangerBtn" id="deleteBtn">Delete account</button>
@@ -263,6 +267,12 @@
 </section>
 
 <div id="menuShade"><div id="menu"></div></div>
+
+<div id="clearSheet"><div class="box">
+  <h3 id="clearTitle"></h3>
+  <p id="clearText"></p>
+  <div class="row"><button id="clearCancel">Cancel</button><button id="clearOk">Delete</button></div>
+</div></div>
 
 <div id="confirmSheet"><div class="box">
   <h3>Delete account?</h3>
