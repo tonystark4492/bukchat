@@ -534,6 +534,7 @@ function addMessage(m, key) {
   }
   d.append(who, body, tm);
   box.append(d);
+  while (box.childElementCount > 300) box.firstElementChild.remove(); // keep the page light
   if (nearBottom || mine) box.scrollTop = box.scrollHeight;
 }
 
