@@ -114,7 +114,8 @@
   .ct .n{font-weight:800;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ct .s{font-size:12px;color:var(--muted)}
   .pill{padding:8px 12px;border-radius:20px;background:var(--panel2);font-size:13px;color:var(--white);display:flex;align-items:center;gap:6px}
-  #msgs{flex:1;overflow-y:auto;overscroll-behavior:contain;contain:content;padding:14px 12px;display:flex;flex-direction:column;gap:8px;background:#0e0e0e}
+  #msgs,#dmMsgs{flex:1;overflow-y:auto;overscroll-behavior:contain;contain:content;padding:14px 12px;display:flex;flex-direction:column;gap:8px;background:#0e0e0e}
+  #dmMsgs .who{display:none}
   .sys{align-self:center;font-size:12px;color:var(--muted);padding:4px 12px;background:var(--panel);border-radius:12px}
   .msg{animation:msgIn .18s ease-out both;max-width:80%;padding:9px 13px 7px;border-radius:18px;word-wrap:break-word;overflow-wrap:anywhere;white-space:pre-wrap;line-height:1.35}
   @keyframes msgIn{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}
@@ -123,23 +124,25 @@
   .msg.other{align-self:flex-start;background:var(--panel2);border-bottom-left-radius:5px}
   .msg.mine{align-self:flex-end;background:var(--accent);color:#000;border-bottom-right-radius:5px}
   .msg.mine .who{display:none}
-  form#sendForm{display:flex;gap:10px;padding:10px 12px;border-top:1px solid var(--line);background:var(--panel)}
-  #msgInput{flex:1;padding:13px 16px;border-radius:24px;border:2px solid var(--line);background:var(--panel2);color:var(--white);outline:none;font-size:16px}
-  #msgInput:focus{border-color:var(--accent)}
-  #sendBtn{width:48px;height:48px;border-radius:50%;background:var(--accent);color:#000;font-size:22px;font-weight:900}
+  form#sendForm,form#dmForm{display:flex;gap:10px;padding:10px 12px;border-top:1px solid var(--line);background:var(--panel)}
+  #msgInput,#dmInput{flex:1;padding:13px 16px;border-radius:24px;border:2px solid var(--line);background:var(--panel2);color:var(--white);outline:none;font-size:16px}
+  #msgInput:focus,#dmInput:focus{border-color:var(--accent)}
+  #sendBtn,#dmSendBtn{width:48px;height:48px;border-radius:50%;background:var(--accent);color:#000;font-size:22px;font-weight:900}
 
   /* Members sheet */
-  #sheet{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:flex-end;z-index:5}
-  #sheet.open{display:flex;animation:fadeIn .2s ease both}
-  #sheet.open .inner{animation:slideUp .28s cubic-bezier(.2,.8,.2,1) both}
+  #sheet,#userSheet{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:flex-end;z-index:5}
+  #sheet.open,#userSheet.open{display:flex;animation:fadeIn .2s ease both}
+  #sheet.open .inner,#userSheet.open .inner{animation:slideUp .28s cubic-bezier(.2,.8,.2,1) both}
   @keyframes fadeIn{from{opacity:0}to{opacity:1}}
   @keyframes slideUp{from{transform:translateY(40px)}to{transform:none}}
   @keyframes popIn{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
-  #sheet .inner{width:100%;max-height:70dvh;overflow:auto;background:var(--panel);border-radius:24px 24px 0 0;padding:20px 20px calc(20px + env(safe-area-inset-bottom));border-top:2px solid var(--accent)}
-  #sheet h3{margin:0 0 14px}
+  #sheet .inner,#userSheet .inner{width:100%;max-height:70dvh;overflow:auto;background:var(--panel);border-radius:24px 24px 0 0;padding:20px 20px calc(20px + env(safe-area-inset-bottom));border-top:2px solid var(--accent)}
+  #sheet h3,#userSheet h3{margin:0 0 14px}
+  #sheet li{cursor:pointer}
+  #sheet li.me{cursor:default}
   #sheet li{list-style:none;display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}
   #sheet ul{margin:0;padding:0}
-  #sheet .av{width:34px;height:34px;border-radius:50%;background:var(--accent);color:#000;display:grid;place-items:center;font-weight:900}
+  #sheet .av,.av{width:34px;height:34px;border-radius:50%;background:var(--accent);color:#000;display:grid;place-items:center;font-weight:900}
   #sheet .you{color:var(--accent);font-size:12px;margin-left:auto}
 
   /* ---------- Menu (3 dots) ---------- */
@@ -152,7 +155,7 @@
   #menu button.danger{color:var(--danger)}
 
   /* ---------- Settings ---------- */
-  #settings .sBody{flex:1;overflow:auto;padding:22px 16px}
+  #settings .sBody,#blocked .sBody{flex:1;overflow:auto;padding:22px 16px}
   .swatches{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:28px}
   .sw{display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 6px;border-radius:16px;background:var(--panel);border:2px solid var(--line);color:var(--white);font-size:13px;font-weight:600}
   .sw i{width:34px;height:34px;border-radius:50%;display:block}
@@ -180,6 +183,40 @@
   #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%) translateY(20px);background:#222;border:1px solid var(--accent);
     color:var(--white);padding:12px 18px;border-radius:14px;font-size:14px;opacity:0;pointer-events:none;transition:.25s;z-index:10;max-width:88%;text-align:center}
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  /* ---------- Tabs, chats list, DMs ---------- */
+  .tabs{display:flex;background:var(--panel);border-bottom:1px solid var(--line)}
+  .tab{flex:1;padding:14px 8px;background:transparent;color:var(--muted);font-weight:800;font-size:15px;letter-spacing:.5px;border-bottom:3px solid transparent;display:flex;align-items:center;justify-content:center;gap:8px}
+  .tab.on{color:var(--white);border-bottom-color:var(--accent)}
+  .badge{min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:var(--accent);color:#000;font-size:12px;font-weight:900;display:inline-grid;place-items:center}
+  .badge[hidden]{display:none}
+  .pane[hidden]{display:none}
+  .searchRow{display:flex;gap:10px;margin-bottom:18px}
+  .searchRow .field{text-align:left;padding:13px 16px;font-size:16px;flex:1;min-width:0}
+  .searchRow button{padding:0 18px;border-radius:14px;background:var(--accent);color:#000;font-weight:800}
+  .dmItem{width:100%;display:flex;align-items:center;gap:14px;padding:12px 10px;border-radius:16px;background:transparent;color:var(--white);text-align:left;margin-bottom:4px}
+  .dmItem:active{background:var(--panel)}
+  .dmItem .av{width:48px;height:48px;font-size:19px;flex:none}
+  .dmItem .mid{flex:1;min-width:0}
+  .dmItem .nm{font-weight:800;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dmItem .pv{font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+  .dmItem.unread .pv{color:var(--white);font-weight:600}
+  .dmItem .rt2{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:none}
+  .dmItem .tmx{font-size:11px;color:var(--muted)}
+  .dmItem.unread .tmx{color:var(--accent)}
+  .emptyNote{color:var(--muted);text-align:center;font-size:14px;padding:34px 20px;line-height:1.5}
+  .av{border-radius:50%;background:var(--accent);color:#000;display:grid;place-items:center;font-weight:900}
+  #dmBlockedBar{display:none;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid var(--line);background:var(--panel);color:var(--muted);font-size:14px}
+  #dmBlockedBar.show{display:flex}
+  #dmBlockedBar span{flex:1}
+  #userSheet .inner button.act{display:block;width:100%;margin-top:10px;padding:14px;border-radius:14px;font-weight:800;font-size:16px;background:var(--panel2);color:var(--white)}
+  #userSheet .inner button.act.pri{background:var(--accent);color:#000}
+  #userSheet .inner button.act.dng{color:var(--danger)}
+  .navRow{width:100%;display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:14px;margin-bottom:28px;color:var(--white);font-weight:600;font-size:15px}
+  .navRow span{color:var(--accent);font-size:20px}
+  .blkRow{display:flex;align-items:center;gap:12px;padding:12px 4px;border-bottom:1px solid var(--line)}
+  .blkRow .av{width:40px;height:40px}
+  .blkRow .nm{flex:1;font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .who.tap{cursor:pointer;text-decoration:underline;text-decoration-color:transparent}
   @media (prefers-reduced-motion:reduce){
     .screen.active,.msg,#sheet.open,#sheet.open .inner,#menuShade.open #menu,#confirmSheet.open,#clearSheet.open,#confirmSheet.open .box,#clearSheet.open .box{animation:none!important}
     button{transition:none}
@@ -237,11 +274,41 @@
     <div class="me">Hi, <strong id="meName"></strong></div>
     <button class="iconBtn" id="lobbyMenuBtn" aria-label="Menu">⋮</button>
   </header>
-  <div class="body">
-    <div class="label">CHATROOMS</div>
-    <div id="roomList"></div>
-    <div class="note">Each room holds up to 50 members at a time</div>
+  <div class="tabs">
+    <button class="tab on" id="tabRooms" data-tab="rooms">Chat Rooms</button>
+    <button class="tab" id="tabChats" data-tab="chats">Chats <span class="badge" id="dmBadge" hidden>0</span></button>
   </div>
+  <div class="body">
+    <div class="pane" id="roomsPane">
+      <div class="label">CHATROOMS</div>
+      <div id="roomList"></div>
+      <div class="note">Each room holds up to 50 members at a time</div>
+    </div>
+    <div class="pane" id="chatsPane" hidden>
+      <form class="searchRow" id="dmSearchForm" autocomplete="off">
+        <input class="field" id="dmSearchInput" maxlength="15" placeholder="Find a username to message" autocapitalize="off" spellcheck="false">
+        <button type="submit" id="dmSearchBtn">Chat</button>
+      </form>
+      <div id="dmList"></div>
+      <div class="emptyNote" id="dmEmpty">No private chats yet.<br>Type a username above, or tap a name inside a chat room, to say hi.</div>
+    </div>
+  </div>
+</section>
+
+<!-- 4b. Private chat (DM) -->
+<section class="screen" id="dm">
+  <header class="chatTop">
+    <button class="iconBtn" id="dmBack" aria-label="Back">‹</button>
+    <div class="av" style="width:38px;height:38px;flex:none" id="dmAv">?</div>
+    <div class="ct"><div class="n" id="dmTitle">Chat</div><div class="s">Private chat</div></div>
+    <button class="iconBtn" id="dmMenuBtn" aria-label="Menu">⋮</button>
+  </header>
+  <div id="dmMsgs"></div>
+  <div id="dmBlockedBar"><span id="dmBlockedText"></span><button class="smallBtn orange" id="dmUnblockBtn">Unblock</button></div>
+  <form id="dmForm" autocomplete="off">
+    <input id="dmInput" placeholder="Type a message" maxlength="500" enterkeyhint="send">
+    <button id="dmSendBtn" type="submit" aria-label="Send">➤</button>
+  </form>
 </section>
 
 <!-- 4. Chat -->
@@ -277,6 +344,8 @@
     </div>
     <div class="label">SOUND</div>
     <div class="acctRow" style="margin-bottom:28px"><span>Message send sound</span><button class="smallBtn orange" id="soundToggle">On</button></div>
+    <div class="label">PRIVACY</div>
+    <button class="navRow" id="blockedRow">Blocked accounts <span>›</span></button>
     <div class="label">CHAT HISTORY</div>
     <button class="dangerBtn" id="clearAllBtn" style="margin-bottom:10px">Delete all chat history</button>
     <div class="note" style="margin:0 0 26px">Clears your view in every room. Other people keep their messages. To clear one room only, open it and use the ⋮ menu.</div>
@@ -284,6 +353,19 @@
     <div class="acctRow"><span>Username</span><strong id="setName"></strong></div>
     <button class="dangerBtn" id="deleteBtn">Delete account</button>
     <div class="note">Deleting removes your login and frees your username. Messages you already sent stay in the chat.</div>
+  </div>
+</section>
+
+<!-- 6. Blocked accounts -->
+<section class="screen" id="blocked">
+  <header class="chatTop">
+    <button class="iconBtn" id="blockedBack" aria-label="Back">‹</button>
+    <div class="ct"><div class="n">Blocked accounts</div></div>
+  </header>
+  <div class="sBody">
+    <div id="blockedList"></div>
+    <div class="emptyNote" id="blockedEmpty">You haven't blocked anyone.</div>
+    <div class="note">Blocked people can't send you private messages, and you can't send them any. Nothing is deleted, and they aren't told.</div>
   </div>
 </section>
 
@@ -303,6 +385,12 @@
 </div></div>
 
 <div id="sheet"><div class="inner"><h3>Members online</h3><ul id="memList"></ul></div></div>
+<div id="userSheet"><div class="inner">
+  <h3 id="usName"></h3>
+  <button class="act pri" id="usMsg">💬 Message</button>
+  <button class="act dng" id="usBlock">Block</button>
+  <button class="act" id="usClose">Cancel</button>
+</div></div>
 <div id="toast"></div>
 
 <script type="module" src="app.js"></script>
