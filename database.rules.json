@@ -281,6 +281,13 @@
         },
         "$other": {
           ".validate": false
+        },
+        "typing": {
+          ".read": "auth != null && (root.child('dms/' + $cid + '/meta/a').val() === auth.uid || root.child('dms/' + $cid + '/meta/b').val() === auth.uid)",
+          "$u": {
+            ".write": "auth != null && auth.uid === $u && (root.child('dms/' + $cid + '/meta/a').val() === auth.uid || root.child('dms/' + $cid + '/meta/b').val() === auth.uid) && !root.child('blocks/' + (root.child('dms/' + $cid + '/meta/a').val() === auth.uid ? root.child('dms/' + $cid + '/meta/b').val() : root.child('dms/' + $cid + '/meta/a').val()) + '/' + auth.uid).exists() && !root.child('blocks/' + auth.uid + '/' + (root.child('dms/' + $cid + '/meta/a').val() === auth.uid ? root.child('dms/' + $cid + '/meta/b').val() : root.child('dms/' + $cid + '/meta/a').val())).exists()",
+            ".validate": "newData.val() === now"
+          }
         }
       }
     },
@@ -331,6 +338,18 @@
         ".write": "auth != null && auth.uid === $uid",
         "$other": {
           ".validate": "newData.val() === true && root.child('users/' + $other).exists()"
+        }
+      }
+    },
+    "presence": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || (root.child('inbox/' + $uid + '/' + (auth.uid < $uid ? auth.uid + '_' + $uid : $uid + '_' + auth.uid) + '/with').exists() && !root.child('blocks/' + $uid + '/' + auth.uid).exists() && !root.child('blocks/' + auth.uid + '/' + $uid).exists()))",
+        ".write": "auth != null && auth.uid === $uid",
+        ".validate": "newData.hasChildren(['online', 'last']) && newData.child('online').isBoolean() && newData.child('last').val() === now",
+        "online": {},
+        "last": {},
+        "$other": {
+          ".validate": false
         }
       }
     }
