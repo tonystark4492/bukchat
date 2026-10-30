@@ -274,6 +274,7 @@ async function doLogout() {
     lobbyUnsub();
     lobbyUnsub = null;
   }
+  await withTimeout(goOffline(), 3000).catch(() => {});
   stopPrivateListeners();
   try {
     await signOut(auth);
@@ -858,6 +859,7 @@ const dmVisible = (e) => e && e.with && e.ts && e.ts > (Number(e.clearedAt) || 0
 
 function startPrivateListeners() {
   if (inboxOff || !uid) return;
+  startPresence();
   inboxReady = false;
   inboxOff = onValue(ref(db, "inbox/" + uid), (snap) => {
     const next = snap.val() || {};
@@ -876,13 +878,16 @@ function startPrivateListeners() {
   }, () => {});
   blocksOff = onValue(ref(db, "blocks/" + uid), (snap) => {
     blocksCache = snap.val() || {};
-    renderChats(); renderBlocked(); updateBadge(); updateDmComposer();
+    renderChats(); renderBlocked(); updateBadge(); updateDmComposer(); updateDmStatus();
   }, () => {});
 }
 function stopPrivateListeners() {
   if (inboxOff) { inboxOff(); inboxOff = null; }
   if (blocksOff) { blocksOff(); blocksOff = null; }
   if (dmOff) { dmOff(); dmOff = null; }
+  if (connOff) { connOff(); connOff = null; }
+  Object.values(peerOff).forEach((f) => f()); peerOff = {}; peerPresence = {};
+  stopTypingWatch(); clearTimeout(typingIdleTimer); lastTypingSent = 0;
   inboxCache = {}; blocksCache = {}; inboxReady = false;
   dmOpen = false; blockedOpen = false; dmOther = null; dmConvId = null;
   $("dmBadge").hidden = true;
@@ -929,7 +934,14 @@ function renderChats() {
       bd.textContent = un > 99 ? "99+" : String(un);
       rt.append(bd);
     }
-    b.append(av, mid, rt);
+    const wrap = document.createElement("div"); wrap.className = "avWrap";
+    const dot = document.createElement("span"); dot.className = "onl";
+    const pp = peerPresence[e.with];
+    dot.hidden = !(activityOn && pp && pp.online);
+    wrap.append(av, dot);
+    b.dataset.other = e.with;
+    b.append(wrap, mid, rt);
+    watchPeer(e.with);
     b.onclick = () => openDm(e.with, "lobby");
     list.append(b);
     getName(e.with).then((n) => {
@@ -971,6 +983,7 @@ async function openDm(other, from) {
   $("dmAv").textContent = (dmName || "?")[0].toUpperCase();
   show("dm");
   updateDmComposer();
+  stopTypingWatch(); watchPeer(other); updateDmStatus();
   const conv = dmConvId;
   getName(other).then((n) => {
     if (dmOther !== other) return;
@@ -991,6 +1004,7 @@ async function openDm(other, from) {
   const q = query(ref(db, "dms/" + conv + "/messages"), orderByChild("ts"), startAt(start), limitToLast(100));
   dmOff = onChildAdded(q, (snap) => addDmMessage(snap.val(), snap.key),
     () => { if (dmConvId === conv) toast("Can't open this chat right now."); });
+  startTypingWatch();
   markDmSeen();
   if (!blocksCache[other]) setTimeout(() => { if (dmOpen) $("dmInput").focus(); }, 250);
 }
@@ -998,6 +1012,7 @@ async function openDm(other, from) {
 function leaveDm() {
   if (!dmOpen) return;
   dmOpen = false;
+  clearMyTyping(dmConvId); stopTypingWatch();
   if (dmOff) { dmOff(); dmOff = null; }
   dmOther = null; dmConvId = null;
   closeMenu();
@@ -1054,6 +1069,7 @@ $("dmForm").addEventListener("submit", async (e) => {
   if (!text || !dmOther) return;
   if (blocksCache[dmOther]) { toast("Unblock this user to send messages."); return; }
   $("dmInput").value = ""; autosize($("dmInput"));
+  clearMyTyping(dmConvId);
   playSendSound();
   const conv = dmConvId, other = dmOther;
   const key = push(ref(db, "dms/" + conv + "/messages")).key;
@@ -1203,6 +1219,160 @@ function renderBlocked() {
   });
 }
 
+// ---------- Online status, last seen and typing ----------
+//   presence/<uid>            {online, last}  written only by its owner; readable by people you have
+//                                              chatted with (and nobody who is blocked)
+//   dms/<conv>/typing/<uid>   server time of the last keystroke burst (removed when done)
+// One switch (Settings) controls all three. If it is off you publish nothing and see nothing.
+let activityOn = true;
+try { activityOn = localStorage.getItem("bukchat-activity") !== "off"; } catch (e) {}
+let connOff = null, isConnected = false, peerOff = {}, peerPresence = {};
+let peerTyping = false, typingOff = null, peerTypingTimer = null, lastTypingSent = 0, typingIdleTimer = null;
+const myPresenceRef = () => ref(db, "presence/" + uid);
+const typingRef = (conv, u) => ref(db, "dms/" + conv + "/typing/" + u);
+
+function publishPresence(online) {
+  if (!uid || !activityOn || !connOff || !isConnected) return;
+  set(myPresenceRef(), { online, last: serverTimestamp() }).catch(() => {});
+}
+function startPresence() {
+  if (connOff || !uid) return;
+  connOff = onValue(ref(db, ".info/connected"), async (s) => {
+    isConnected = s.val() === true;
+    if (!isConnected || !uid) return;
+    try {
+      if (activityOn) {
+        // If the phone loses its connection the server marks me offline by itself.
+        await onDisconnect(myPresenceRef()).set({ online: false, last: serverTimestamp() });
+        publishPresence(!document.hidden);
+      } else {
+        await onDisconnect(myPresenceRef()).cancel();
+        await remove(myPresenceRef());
+      }
+    } catch (e) {}
+  });
+}
+async function goOffline() {
+  if (!uid || !connOff || !activityOn) return;
+  clearMyTyping(dmConvId);
+  try {
+    await onDisconnect(myPresenceRef()).cancel();
+    await set(myPresenceRef(), { online: false, last: serverTimestamp() });
+  } catch (e) {}
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { clearMyTyping(dmConvId); publishPresence(false); } else publishPresence(true);
+});
+if (CapApp && CapApp.addListener) {
+  CapApp.addListener("appStateChange", (st) => {
+    if (!st.isActive) clearMyTyping(dmConvId);
+    publishPresence(!!st.isActive);
+  });
+}
+
+function watchPeer(other) {
+  if (!other || !activityOn || peerOff[other] || Object.keys(peerOff).length >= 40) return;
+  peerOff[other] = onValue(ref(db, "presence/" + other), (s) => {
+    peerPresence[other] = s.exists() ? s.val() : null;
+    refreshStatusUI(other);
+  }, () => { peerPresence[other] = null; refreshStatusUI(other); });
+}
+function refreshStatusUI(other) {
+  if (dmOpen && dmOther === other) updateDmStatus();
+  const p = peerPresence[other];
+  document.querySelectorAll('.dmItem[data-other="' + other + '"] .onl').forEach((d) => {
+    d.hidden = !(activityOn && p && p.online);
+  });
+}
+function fmtLastSeen(ts) {
+  const d = new Date(ts), now = new Date();
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (d.toDateString() === now.toDateString()) return "last seen today at " + time;
+  const y = new Date(now); y.setDate(now.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return "last seen yesterday at " + time;
+  return "last seen " + d.toLocaleDateString([], { day: "numeric", month: "short" });
+}
+function updateDmStatus() {
+  const el = $("dmSub");
+  if (!el || !dmOpen) return;
+  const p = peerPresence[dmOther], hidden = !activityOn || !!blocksCache[dmOther];
+  let text = "Private chat", cls = "s";
+  if (!hidden && peerTyping) { text = "typing…"; cls = "s typing"; }
+  else if (!hidden && p) {
+    if (p.online) { text = "online"; cls = "s online"; }
+    else if (p.last) text = fmtLastSeen(p.last);
+  }
+  el.textContent = text; el.className = cls;
+}
+
+// Typing: I write a timestamp at most every 2.5 s while typing; the other side just notices
+// that it changed and shows "typing…" for 5 s (no clock comparison needed).
+function startTypingWatch() {
+  stopTypingWatch();
+  if (!dmConvId || !dmOther || !activityOn) return;
+  let first = true;
+  typingOff = onValue(typingRef(dmConvId, dmOther), (s) => {
+    if (first) { first = false; return; }          // ignore anything left over from before I opened the chat
+    clearTimeout(peerTypingTimer);
+    if (!s.exists()) peerTyping = false;
+    else {
+      peerTyping = true;
+      peerTypingTimer = setTimeout(() => { peerTyping = false; updateDmStatus(); }, 5000);
+    }
+    updateDmStatus();
+  }, () => {});
+}
+function stopTypingWatch() {
+  if (typingOff) { typingOff(); typingOff = null; }
+  clearTimeout(peerTypingTimer);
+  peerTyping = false;
+}
+function sendTyping() {
+  if (!activityOn || !dmConvId || !dmOther || blocksCache[dmOther]) return;
+  const now = Date.now(), conv = dmConvId;
+  if (now - lastTypingSent > 2500) {
+    lastTypingSent = now;
+    const r = typingRef(conv, uid);
+    onDisconnect(r).remove().catch(() => {});
+    set(r, serverTimestamp()).catch(() => {});
+  }
+  clearTimeout(typingIdleTimer);
+  typingIdleTimer = setTimeout(() => clearMyTyping(conv), 4000);
+}
+function clearMyTyping(conv) {
+  clearTimeout(typingIdleTimer);
+  const had = lastTypingSent;
+  lastTypingSent = 0;
+  if (had && conv && uid) remove(typingRef(conv, uid)).catch(() => {});
+}
+$("dmInput").addEventListener("input", () => {
+  if ($("dmInput").value.trim()) sendTyping(); else clearMyTyping(dmConvId);
+});
+$("dmInput").addEventListener("blur", () => clearMyTyping(dmConvId));
+
+// Settings switch
+function renderActivityBtn() { $("presenceToggle").textContent = activityOn ? "On" : "Off"; }
+async function applyActivity() {
+  renderActivityBtn();
+  if (!uid || !db) return;
+  if (!activityOn) {
+    clearMyTyping(dmConvId); stopTypingWatch();
+    Object.values(peerOff).forEach((f) => f()); peerOff = {}; peerPresence = {};
+    try { await onDisconnect(myPresenceRef()).cancel(); await remove(myPresenceRef()); } catch (e) {}
+  } else {
+    try { await onDisconnect(myPresenceRef()).set({ online: false, last: serverTimestamp() }); } catch (e) {}
+    publishPresence(!document.hidden);
+    if (dmOpen) { watchPeer(dmOther); startTypingWatch(); }
+  }
+  renderChats(); updateDmStatus();
+}
+$("presenceToggle").onclick = () => {
+  activityOn = !activityOn;
+  try { localStorage.setItem("bukchat-activity", activityOn ? "on" : "off"); } catch (e) {}
+  applyActivity();
+};
+renderActivityBtn();
+
 // ---------- Delete account ----------
 function closeConfirm() {
   $("confirmSheet").classList.remove("open");
@@ -1247,6 +1417,8 @@ $("delConfirm").onclick = async () => {
     stopPrivateListeners();
     await remove(ref(db, "inbox/" + me));   // your chat list (the other person keeps their messages)
     await remove(ref(db, "blocks/" + me));
+    try { await onDisconnect(ref(db, "presence/" + me)).cancel(); } catch (e) {}
+    await remove(ref(db, "presence/" + me));
     await remove(ref(db, "names/" + key));
     await remove(ref(db, "users/" + me));
     await deleteUser(auth.currentUser);
