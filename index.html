@@ -196,6 +196,11 @@
   .dmItem{width:100%;display:flex;align-items:center;gap:14px;padding:12px 10px;border-radius:16px;background:transparent;color:var(--white);text-align:left;margin-bottom:4px}
   .dmItem:active{background:var(--panel)}
   .dmItem .av{width:48px;height:48px;font-size:19px;flex:none}
+  .avWrap{position:relative;flex:none}
+  .onl{position:absolute;right:0;bottom:0;width:13px;height:13px;border-radius:50%;background:var(--ok);border:2px solid var(--bg)}
+  .onl[hidden]{display:none}
+  .ct .s.online{color:var(--ok)}
+  .ct .s.typing{color:var(--accent);font-weight:700}
   .dmItem .mid{flex:1;min-width:0}
   .dmItem .nm{font-weight:800;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .dmItem .pv{font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
@@ -300,7 +305,7 @@
   <header class="chatTop">
     <button class="iconBtn" id="dmBack" aria-label="Back">‹</button>
     <div class="av" style="width:38px;height:38px;flex:none" id="dmAv">?</div>
-    <div class="ct"><div class="n" id="dmTitle">Chat</div><div class="s">Private chat</div></div>
+    <div class="ct"><div class="n" id="dmTitle">Chat</div><div class="s" id="dmSub">Private chat</div></div>
     <button class="iconBtn" id="dmMenuBtn" aria-label="Menu">⋮</button>
   </header>
   <div id="dmMsgs"></div>
@@ -346,6 +351,8 @@
     <div class="acctRow" style="margin-bottom:28px"><span>Message send sound</span><button class="smallBtn orange" id="soundToggle">On</button></div>
     <div class="label">PRIVACY</div>
     <button class="navRow" id="blockedRow">Blocked accounts <span>›</span></button>
+    <div class="acctRow" style="margin-bottom:8px"><span>Show my online status, last seen &amp; typing</span><button class="smallBtn orange" id="presenceToggle">On</button></div>
+    <div class="note" style="margin:0 0 28px;text-align:left">Only people you have chatted with can see it. If you turn it off, others can't see yours and you can't see theirs. This setting is saved on this device.</div>
     <div class="label">CHAT HISTORY</div>
     <button class="dangerBtn" id="clearAllBtn" style="margin-bottom:10px">Delete all chat history</button>
     <div class="note" style="margin:0 0 26px">Clears your view in every room. Other people keep their messages. To clear one room only, open it and use the ⋮ menu.</div>
