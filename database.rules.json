@@ -250,6 +250,89 @@
           }
         }
       }
+    },
+    "dms": {
+      "$cid": {
+        "meta": {
+          ".read": "auth != null && (!data.exists() || data.child('a').val() === auth.uid || data.child('b').val() === auth.uid)",
+          ".write": "auth != null && !data.exists()",
+          ".validate": "newData.hasChildren(['a', 'b']) && newData.child('a').isString() && newData.child('b').isString() && newData.child('a').val() < newData.child('b').val() && $cid === newData.child('a').val() + '_' + newData.child('b').val() && (newData.child('a').val() === auth.uid || newData.child('b').val() === auth.uid) && root.child('users/' + newData.child('a').val()).exists() && root.child('users/' + newData.child('b').val()).exists()",
+          "a": {},
+          "b": {},
+          "$other": {
+            ".validate": false
+          }
+        },
+        "messages": {
+          ".indexOn": [
+            "ts"
+          ],
+          ".read": "auth != null && (root.child('dms/' + $cid + '/meta/a').val() === auth.uid || root.child('dms/' + $cid + '/meta/b').val() === auth.uid)",
+          "$m": {
+            ".write": "auth != null && !data.exists() && (root.child('dms/' + $cid + '/meta/a').val() === auth.uid || root.child('dms/' + $cid + '/meta/b').val() === auth.uid) && !root.child('blocks/' + (root.child('dms/' + $cid + '/meta/a').val() === auth.uid ? root.child('dms/' + $cid + '/meta/b').val() : root.child('dms/' + $cid + '/meta/a').val()) + '/' + auth.uid).exists() && !root.child('blocks/' + auth.uid + '/' + (root.child('dms/' + $cid + '/meta/a').val() === auth.uid ? root.child('dms/' + $cid + '/meta/b').val() : root.child('dms/' + $cid + '/meta/a').val())).exists()",
+            ".validate": "newData.hasChildren(['from', 'text', 'ts']) && newData.child('from').val() === auth.uid && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('ts').val() === now",
+            "from": {},
+            "text": {},
+            "ts": {},
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+    "inbox": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid",
+        "$cid": {
+          ".validate": "newData.hasChildren(['with', 'last', 'from', 'ts'])",
+          "with": {
+            ".write": "auth != null && !root.child('blocks/' + $uid + '/' + auth.uid).exists() && !root.child('blocks/' + auth.uid + '/' + $uid).exists() && ((root.child('dms/' + $cid + '/meta/a').val() === auth.uid && root.child('dms/' + $cid + '/meta/b').val() === $uid) || (root.child('dms/' + $cid + '/meta/b').val() === auth.uid && root.child('dms/' + $cid + '/meta/a').val() === $uid))",
+            ".validate": "newData.isString() && newData.val() !== $uid && (root.child('dms/' + $cid + '/meta/a').val() === newData.val() || root.child('dms/' + $cid + '/meta/b').val() === newData.val()) && (root.child('dms/' + $cid + '/meta/a').val() === $uid || root.child('dms/' + $cid + '/meta/b').val() === $uid)"
+          },
+          "last": {
+            ".write": "auth != null && !root.child('blocks/' + $uid + '/' + auth.uid).exists() && !root.child('blocks/' + auth.uid + '/' + $uid).exists() && ((root.child('dms/' + $cid + '/meta/a').val() === auth.uid && root.child('dms/' + $cid + '/meta/b').val() === $uid) || (root.child('dms/' + $cid + '/meta/b').val() === auth.uid && root.child('dms/' + $cid + '/meta/a').val() === $uid))",
+            ".validate": "newData.isString() && newData.val().length <= 80"
+          },
+          "from": {
+            ".write": "auth != null && !root.child('blocks/' + $uid + '/' + auth.uid).exists() && !root.child('blocks/' + auth.uid + '/' + $uid).exists() && ((root.child('dms/' + $cid + '/meta/a').val() === auth.uid && root.child('dms/' + $cid + '/meta/b').val() === $uid) || (root.child('dms/' + $cid + '/meta/b').val() === auth.uid && root.child('dms/' + $cid + '/meta/a').val() === $uid))",
+            ".validate": "newData.val() === auth.uid"
+          },
+          "ts": {
+            ".write": "auth != null && !root.child('blocks/' + $uid + '/' + auth.uid).exists() && !root.child('blocks/' + auth.uid + '/' + $uid).exists() && ((root.child('dms/' + $cid + '/meta/a').val() === auth.uid && root.child('dms/' + $cid + '/meta/b').val() === $uid) || (root.child('dms/' + $cid + '/meta/b').val() === auth.uid && root.child('dms/' + $cid + '/meta/a').val() === $uid))",
+            ".validate": "newData.val() === now"
+          },
+          "n": {
+            ".write": "auth != null && !root.child('blocks/' + $uid + '/' + auth.uid).exists() && !root.child('blocks/' + auth.uid + '/' + $uid).exists() && ((root.child('dms/' + $cid + '/meta/a').val() === auth.uid && root.child('dms/' + $cid + '/meta/b').val() === $uid) || (root.child('dms/' + $cid + '/meta/b').val() === auth.uid && root.child('dms/' + $cid + '/meta/a').val() === $uid))",
+            ".validate": "newData.isNumber() && auth.uid !== $uid && newData.val() === (root.child('inbox/' + auth.uid + '/' + $cid + '/sent').exists() ? root.child('inbox/' + auth.uid + '/' + $cid + '/sent').val() + 1 : 1)"
+          },
+          "sent": {
+            ".validate": "newData.isNumber() && auth.uid === $uid && newData.val() === (data.exists() ? data.val() + 1 : 1)"
+          },
+          "seen": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "clearedAt": {
+            ".validate": "newData.val() === now"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
+    },
+    "blocks": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid",
+        "$other": {
+          ".validate": "newData.val() === true && root.child('users/' + $other).exists()"
+        }
+      }
     }
   }
 }
