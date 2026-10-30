@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, interactive-widget=resizes-content">
 <meta name="theme-color" content="#0b0b0b">
 <title>BUKCHAT</title>
 <link rel="manifest" href="manifest.webmanifest">
@@ -33,7 +33,7 @@
   @keyframes screenIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
   #splash.active{animation:none}
   button{font:inherit;cursor:pointer;border:0;touch-action:manipulation;transition:transform .12s ease,background-color .15s ease,opacity .15s ease}
-  input{font:inherit}
+  input,textarea{font:inherit}
 
   /* ---------- Splash ---------- */
   #splash{align-items:center;justify-content:center;background:radial-gradient(circle at 50% 40%,#1a1a1a,#000 70%)}
@@ -124,8 +124,8 @@
   .msg.other{align-self:flex-start;background:var(--panel2);border-bottom-left-radius:5px}
   .msg.mine{align-self:flex-end;background:var(--accent);color:#000;border-bottom-right-radius:5px}
   .msg.mine .who{display:none}
-  form#sendForm,form#dmForm{display:flex;gap:10px;padding:10px 12px;border-top:1px solid var(--line);background:var(--panel)}
-  #msgInput,#dmInput{flex:1;padding:13px 16px;border-radius:24px;border:2px solid var(--line);background:var(--panel2);color:var(--white);outline:none;font-size:16px}
+  form#sendForm,form#dmForm{display:flex;align-items:flex-end;gap:10px;padding:10px 12px;border-top:1px solid var(--line);background:var(--panel)}
+  #msgInput,#dmInput{flex:1;min-width:0;display:block;resize:none;line-height:1.3;max-height:120px;overflow-y:auto;padding:13px 16px;border-radius:24px;border:2px solid var(--line);background:var(--panel2);color:var(--white);outline:none;font-size:16px}
   #msgInput:focus,#dmInput:focus{border-color:var(--accent)}
   #sendBtn,#dmSendBtn{width:48px;height:48px;border-radius:50%;background:var(--accent);color:#000;font-size:22px;font-weight:900}
 
@@ -306,7 +306,7 @@
   <div id="dmMsgs"></div>
   <div id="dmBlockedBar"><span id="dmBlockedText"></span><button class="smallBtn orange" id="dmUnblockBtn">Unblock</button></div>
   <form id="dmForm" autocomplete="off">
-    <input id="dmInput" placeholder="Type a message" maxlength="500" enterkeyhint="send">
+    <textarea id="dmInput" rows="1" placeholder="Type a message" maxlength="500" enterkeyhint="enter" autocomplete="off"></textarea>
     <button id="dmSendBtn" type="submit" aria-label="Send">➤</button>
   </form>
 </section>
@@ -321,7 +321,7 @@
   </header>
   <div id="msgs"></div>
   <form id="sendForm" autocomplete="off">
-    <input id="msgInput" placeholder="Type a message" maxlength="500" enterkeyhint="send">
+    <textarea id="msgInput" rows="1" placeholder="Type a message" maxlength="500" enterkeyhint="enter" autocomplete="off"></textarea>
     <button id="sendBtn" type="submit" aria-label="Send">➤</button>
   </form>
 </section>
