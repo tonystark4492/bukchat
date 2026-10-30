@@ -428,7 +428,7 @@ function openChat(membership) {
   }
   show("chat");
   $("chatTitle").textContent = currentRoom.emoji + " " + currentRoom.name;
-  $("msgs").innerHTML = "";
+  $("msgs").innerHTML = ""; stick.set($("msgs"), true);
   if (!membership.greeted) {
     const greetings = [
       "👋 Hey there! Glad you're here. 😊",
@@ -515,10 +515,51 @@ function fmtTime(ts) {
   return d.toLocaleDateString([], { day: "numeric", month: "short" }) + ", " + time;
 }
 
+// ---------- Keep the newest message in view ----------
+// stick = "the reader is at the bottom". While true, anything that changes the size of the
+// chat area (keyboard opening/closing, the message box growing) keeps the bottom in view.
+const stick = new WeakMap();
+function watchBottom(box) {
+  stick.set(box, true);
+  box.addEventListener("scroll", () =>
+    stick.set(box, box.scrollHeight - box.scrollTop - box.clientHeight < 60), { passive: true });
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => { if (stick.get(box)) box.scrollTop = box.scrollHeight; }).observe(box);
+  }
+}
+watchBottom($("msgs")); watchBottom($("dmMsgs"));
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", () =>
+    ["msgs", "dmMsgs"].forEach((id) => { const b = $(id); if (stick.get(b)) b.scrollTop = b.scrollHeight; }));
+}
+// Message box: grows with the text (up to ~5 lines). On a phone the keyboard's Enter key adds a
+// new line and the ➤ button sends. With a physical keyboard Enter sends and Shift+Enter adds a line.
+function autosize(t) {
+  const box = $(t.id === "msgInput" ? "msgs" : "dmMsgs");
+  const wasAtBottom = stick.get(box);
+  t.style.height = "auto";                       // measure at one line,
+  t.style.height = Math.min(t.scrollHeight, 120) + "px";
+  if (wasAtBottom) box.scrollTop = box.scrollHeight; // then keep the newest message in view
+}
+["msgInput", "dmInput"].forEach((id) => {
+  const t = $(id);
+  t.addEventListener("input", () => autosize(t));
+  t.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing && window.matchMedia("(pointer: fine)").matches) {
+      e.preventDefault();
+      t.form.requestSubmit();
+    }
+  });
+  t.addEventListener("focus", () => setTimeout(() => {
+    const b = $(id === "msgInput" ? "msgs" : "dmMsgs");
+    if (stick.get(b)) b.scrollTop = b.scrollHeight;
+  }, 300));
+});
+
 function addMessage(m, key) {
   if (!m || typeof m.text !== "string") return;
   const box = $("msgs");
-  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  const nearBottom = stick.get(box) || box.scrollHeight - box.scrollTop - box.clientHeight < 120;
   const mine = m.uid === uid;
   const d = document.createElement("div");
   d.className = "msg " + (mine ? "mine" : "other");
@@ -588,7 +629,7 @@ $("sendForm").addEventListener("submit", async (e) => {
   const text = $("msgInput").value.trim();
   if (!text) return;
   playSendSound();
-  $("msgInput").value = "";
+  $("msgInput").value = ""; autosize($("msgInput"));
   const msgRef = push(ref(db, ROOM + "/messages"));
   const key = msgRef.key;
   pendingKeys.add(key);
@@ -602,7 +643,7 @@ $("sendForm").addEventListener("submit", async (e) => {
     const el = document.querySelector('.msg[data-key="' + key + '"]');
     if (el) el.remove();
     toast("Message not sent. Check your connection.");
-    $("msgInput").value = text;
+    $("msgInput").value = text; autosize($("msgInput"));
   }
   $("msgInput").focus();
 });
@@ -748,7 +789,7 @@ async function markCleared(room) {
 function resetChatView(start) {
   if (!inRoom || !currentMembership) return;
   currentMembership.start = Math.max(currentMembership.start, start);
-  $("msgs").innerHTML = "";
+  $("msgs").innerHTML = ""; stick.set($("msgs"), true);
   startMessageListener();
 }
 
@@ -925,7 +966,7 @@ async function openDm(other, from) {
   dmName = nameCache[other] || "";
   dmOpen = true;
   history.pushState({ dm: true }, "");
-  $("dmMsgs").innerHTML = "";
+  $("dmMsgs").innerHTML = ""; stick.set($("dmMsgs"), true);
   $("dmTitle").textContent = dmName || "…";
   $("dmAv").textContent = (dmName || "?")[0].toUpperCase();
   show("dm");
@@ -969,7 +1010,7 @@ function addDmMessage(m, key) {
   if (!m || typeof m.text !== "string") return;
   const box = $("dmMsgs");
   if (key && box.querySelector('[data-key="' + key + '"]')) return; // already shown
-  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  const nearBottom = stick.get(box) || box.scrollHeight - box.scrollTop - box.clientHeight < 120;
   const mine = m.from === uid;
   const d = document.createElement("div");
   d.className = "msg " + (mine ? "mine" : "other");
@@ -1012,7 +1053,7 @@ $("dmForm").addEventListener("submit", async (e) => {
   const text = $("dmInput").value.trim();
   if (!text || !dmOther) return;
   if (blocksCache[dmOther]) { toast("Unblock this user to send messages."); return; }
-  $("dmInput").value = "";
+  $("dmInput").value = ""; autosize($("dmInput"));
   playSendSound();
   const conv = dmConvId, other = dmOther;
   const key = push(ref(db, "dms/" + conv + "/messages")).key;
@@ -1045,7 +1086,7 @@ $("dmForm").addEventListener("submit", async (e) => {
     const el = document.querySelector('#dmMsgs .msg[data-key="' + key + '"]');
     if (el) el.remove();
     toast("Message not sent. Check your connection, or you may not be able to message this user.");
-    if (dmConvId === conv) $("dmInput").value = text;
+    if (dmConvId === conv) { $("dmInput").value = text; autosize($("dmInput")); }
   }
 });
 
