@@ -7,7 +7,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import {
   getDatabase, ref, get, set, push, onValue, onChildAdded, remove,
-  onDisconnect, serverTimestamp, query, limitToLast, orderByChild, startAt
+  onDisconnect, serverTimestamp, query, limitToLast, orderByChild, startAt, update
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
 import { firebaseConfig } from "./config.js";
 
@@ -274,6 +274,7 @@ async function doLogout() {
     lobbyUnsub();
     lobbyUnsub = null;
   }
+  stopPrivateListeners();
   try {
     await signOut(auth);
     uid = null;
@@ -308,6 +309,8 @@ function renderRooms() {
 
 function enterLobby() {
   show("lobby");
+  setTab("rooms"); // the app always opens on Chat Rooms
+  startPrivateListeners();
   $("meName").textContent = myName;
   if (lobbyUnsub) lobbyUnsub();
   renderRooms();
@@ -464,6 +467,9 @@ function openChat(membership) {
         y.className = "you";
         y.textContent = "you";
         li.append(y);
+        li.className = "me";
+      } else {
+        li.onclick = () => openUserSheet(uids[i], n);
       }
       ul.append(li);
     });
@@ -520,6 +526,10 @@ function addMessage(m, key) {
   const who = document.createElement("div");
   who.className = "who";
   who.textContent = m.name || "?";
+  if (!mine && m.uid) {
+    who.classList.add("tap");
+    who.onclick = () => openUserSheet(m.uid, m.name);
+  }
   const body = document.createElement("div");
   body.textContent = m.text;
   const tm = document.createElement("div");
@@ -621,10 +631,12 @@ async function leaveChat(fromPop) {
 const CapApp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
 function goBack() {
   if ($("menuShade").classList.contains("open")) { closeMenu(); return; }
-  for (const id of ["confirmSheet", "clearSheet", "sheet"]) {
+  for (const id of ["confirmSheet", "clearSheet", "userSheet", "sheet"]) {
     if ($(id).classList.contains("open")) { $(id).classList.remove("open"); return; }
   }
+  if (blockedOpen) { closeBlocked(); return; }
   if (settingsOpen) { closeSettings(); return; }
+  if (dmOpen) { leaveDm(); return; }
   if (inRoom) { leaveChat(); return; }
   // On the lobby / login screens: send the app to the background like other apps.
   if (CapApp) { if (CapApp.minimizeApp) CapApp.minimizeApp(); else if (CapApp.exitApp) CapApp.exitApp(); }
@@ -635,7 +647,9 @@ $("backBtn").onclick = () => {
   if (CapApp) leaveChat(); else history.back();
 };
 window.addEventListener("popstate", () => {
+  if (blockedOpen) { closeBlocked(); return; }
   if (settingsOpen) { closeSettings(); return; }
+  if (dmOpen) { leaveDm(); return; }
   if (inRoom) leaveChat(true);
 });
 $("membersBtn").onclick = () => $("sheet").classList.add("open");
@@ -773,6 +787,381 @@ $("clearAllBtn").onclick = () => {
     });
 };
 
+// ---------- Private chats (DMs) ----------
+// Database layout (see database.rules.json):
+//   dms/<convId>/meta            who the two people are (written once)
+//   dms/<convId>/messages/<id>   {from, text, ts}
+//   inbox/<uid>/<convId>         my chat-list entry: with, last, from, ts, n (their sent count),
+//                                sent (my sent count), seen (their count I have read), clearedAt
+//   blocks/<uid>/<otherUid>      true = I blocked them
+// convId = the two user ids, sorted, joined with "_".
+const dmConv = (a, b) => (a < b ? a + "_" + b : b + "_" + a);
+let lobbyTab = "rooms";
+let inboxCache = {}, blocksCache = {}, inboxOff = null, blocksOff = null, inboxReady = false;
+let dmOpen = false, dmReturn = "lobby", dmOther = null, dmConvId = null, dmOff = null, dmName = "";
+let blockedOpen = false;
+const sentLocal = {};
+
+function setTab(t) {
+  lobbyTab = t;
+  $("tabRooms").classList.toggle("on", t === "rooms");
+  $("tabChats").classList.toggle("on", t === "chats");
+  $("roomsPane").hidden = t !== "rooms";
+  $("chatsPane").hidden = t !== "chats";
+}
+$("tabRooms").onclick = () => setTab("rooms");
+$("tabChats").onclick = () => setTab("chats");
+
+const unreadOf = (e) => Math.max(0, (Number(e.n) || 0) - (Number(e.seen) || 0));
+const dmVisible = (e) => e && e.with && e.ts && e.ts > (Number(e.clearedAt) || 0) && !blocksCache[e.with];
+
+function startPrivateListeners() {
+  if (inboxOff || !uid) return;
+  inboxReady = false;
+  inboxOff = onValue(ref(db, "inbox/" + uid), (snap) => {
+    const next = snap.val() || {};
+    if (inboxReady) {
+      for (const c of Object.keys(next)) {
+        const e = next[c], was = inboxCache[c];
+        if ((Number(e.n) || 0) > ((was && Number(was.n)) || 0) && e.with &&
+            !blocksCache[e.with] && !(dmOpen && dmConvId === c)) {
+          getName(e.with).then((nm) => toast("💬 New message from " + (nm || "someone")));
+        }
+      }
+    }
+    inboxCache = next;
+    inboxReady = true;
+    renderChats(); updateBadge(); markDmSeen();
+  }, () => {});
+  blocksOff = onValue(ref(db, "blocks/" + uid), (snap) => {
+    blocksCache = snap.val() || {};
+    renderChats(); renderBlocked(); updateBadge(); updateDmComposer();
+  }, () => {});
+}
+function stopPrivateListeners() {
+  if (inboxOff) { inboxOff(); inboxOff = null; }
+  if (blocksOff) { blocksOff(); blocksOff = null; }
+  if (dmOff) { dmOff(); dmOff = null; }
+  inboxCache = {}; blocksCache = {}; inboxReady = false;
+  dmOpen = false; blockedOpen = false; dmOther = null; dmConvId = null;
+  $("dmBadge").hidden = true;
+  $("dmList").innerHTML = "";
+}
+
+function updateBadge() {
+  let total = 0;
+  Object.values(inboxCache).forEach((e) => { if (dmVisible(e)) total += unreadOf(e); });
+  const b = $("dmBadge");
+  b.hidden = total === 0;
+  b.textContent = total > 99 ? "99+" : String(total);
+}
+
+function fmtListTime(ts) {
+  const d = new Date(ts);
+  if (d.toDateString() === new Date().toDateString())
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleDateString([], { day: "numeric", month: "short" });
+}
+
+function renderChats() {
+  const list = $("dmList");
+  const items = Object.entries(inboxCache)
+    .filter(([, e]) => dmVisible(e))
+    .sort((a, b) => b[1].ts - a[1].ts);
+  list.innerHTML = "";
+  $("dmEmpty").style.display = items.length ? "none" : "";
+  items.forEach(([, e]) => {
+    const b = document.createElement("button");
+    const un = unreadOf(e);
+    b.className = "dmItem" + (un ? " unread" : "");
+    const av = document.createElement("div"); av.className = "av"; av.textContent = "?";
+    const mid = document.createElement("div"); mid.className = "mid";
+    const nm = document.createElement("div"); nm.className = "nm"; nm.textContent = "…";
+    const pv = document.createElement("div"); pv.className = "pv";
+    pv.textContent = (e.from === uid ? "You: " : "") + (e.last || "");
+    mid.append(nm, pv);
+    const rt = document.createElement("div"); rt.className = "rt2";
+    const tm = document.createElement("div"); tm.className = "tmx"; tm.textContent = fmtListTime(e.ts);
+    rt.append(tm);
+    if (un) {
+      const bd = document.createElement("span"); bd.className = "badge";
+      bd.textContent = un > 99 ? "99+" : String(un);
+      rt.append(bd);
+    }
+    b.append(av, mid, rt);
+    b.onclick = () => openDm(e.with, "lobby");
+    list.append(b);
+    getName(e.with).then((n) => {
+      nm.textContent = n || "Unknown user";
+      av.textContent = (n || "?")[0].toUpperCase();
+    });
+  });
+}
+
+// Search: exact username -> open a private chat with that person.
+$("dmSearchForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const v = $("dmSearchInput").value.trim();
+  if (!v) return;
+  if (!validName(v)) { toast("Usernames are 3–15 letters, numbers or _"); return; }
+  $("dmSearchBtn").disabled = true;
+  try {
+    const snap = await withTimeout(get(ref(db, "names/" + v.toLowerCase())), 10000);
+    const other = snap.val();
+    if (!other) toast("No user named “" + v + "”.");
+    else if (other === uid) toast("That's you 🙂");
+    else { $("dmSearchInput").value = ""; openDm(other, "lobby"); }
+  } catch (err) {
+    toast("Couldn't search. Check your connection.");
+  }
+  $("dmSearchBtn").disabled = false;
+});
+
+async function openDm(other, from) {
+  if (!other || other === uid) return;
+  dmReturn = from === "chat" ? "chat" : "lobby";
+  dmOther = other;
+  dmConvId = dmConv(uid, other);
+  dmName = nameCache[other] || "";
+  dmOpen = true;
+  history.pushState({ dm: true }, "");
+  $("dmMsgs").innerHTML = "";
+  $("dmTitle").textContent = dmName || "…";
+  $("dmAv").textContent = (dmName || "?")[0].toUpperCase();
+  show("dm");
+  updateDmComposer();
+  const conv = dmConvId;
+  getName(other).then((n) => {
+    if (dmOther !== other) return;
+    dmName = n || "Unknown user";
+    $("dmTitle").textContent = dmName;
+    $("dmAv").textContent = dmName[0].toUpperCase();
+    updateDmComposer();
+  });
+  // First time with this person: create the conversation record (the rules allow
+  // this once, only for the two people in it). If it already exists this just fails quietly.
+  if (!inboxCache[conv]) {
+    const a = uid < other ? uid : other, b = uid < other ? other : uid;
+    try { await set(ref(db, "dms/" + conv + "/meta"), { a, b }); } catch (e) {}
+    if (dmConvId !== conv) return;
+  }
+  if (dmOff) { dmOff(); dmOff = null; }
+  const start = Number(inboxCache[conv] && inboxCache[conv].clearedAt) || 0;
+  const q = query(ref(db, "dms/" + conv + "/messages"), orderByChild("ts"), startAt(start), limitToLast(100));
+  dmOff = onChildAdded(q, (snap) => addDmMessage(snap.val(), snap.key),
+    () => { if (dmConvId === conv) toast("Can't open this chat right now."); });
+  markDmSeen();
+  if (!blocksCache[other]) setTimeout(() => { if (dmOpen) $("dmInput").focus(); }, 250);
+}
+
+function leaveDm() {
+  if (!dmOpen) return;
+  dmOpen = false;
+  if (dmOff) { dmOff(); dmOff = null; }
+  dmOther = null; dmConvId = null;
+  closeMenu();
+  if (dmReturn === "chat" && inRoom) show("chat");
+  else { show("lobby"); setTab("chats"); }
+}
+$("dmBack").onclick = () => { if (CapApp) leaveDm(); else history.back(); };
+
+function addDmMessage(m, key) {
+  if (!m || typeof m.text !== "string") return;
+  const box = $("dmMsgs");
+  if (key && box.querySelector('[data-key="' + key + '"]')) return; // already shown
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  const mine = m.from === uid;
+  const d = document.createElement("div");
+  d.className = "msg " + (mine ? "mine" : "other");
+  if (key) d.dataset.key = key;
+  const body = document.createElement("div");
+  body.textContent = m.text;
+  const tm = document.createElement("div");
+  tm.className = "tm";
+  tm.textContent = m.ts ? fmtTime(m.ts) : "";
+  if (mine) {
+    const tick = document.createElement("span");
+    tick.className = "tick";
+    tick.textContent = pendingKeys.has(key) ? " 🕓" : " ✓";
+    tm.append(tick);
+  }
+  d.append(body, tm);
+  box.append(d);
+  while (box.childElementCount > 300) box.firstElementChild.remove();
+  if (nearBottom || mine) box.scrollTop = box.scrollHeight;
+}
+
+// Tell the other side's list that I have read everything so far.
+function markDmSeen() {
+  if (!dmOpen || !dmConvId) return;
+  const e = inboxCache[dmConvId];
+  if (e && (Number(e.n) || 0) > (Number(e.seen) || 0)) {
+    set(ref(db, "inbox/" + uid + "/" + dmConvId + "/seen"), Number(e.n)).catch(() => {});
+  }
+}
+
+function updateDmComposer() {
+  const blocked = !!(dmOther && blocksCache[dmOther]);
+  $("dmForm").style.display = blocked ? "none" : "";
+  $("dmBlockedBar").classList.toggle("show", blocked);
+  $("dmBlockedText").textContent = "You blocked " + (dmName || "this user") + ". Unblock to send messages.";
+}
+
+$("dmForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("dmInput").value.trim();
+  if (!text || !dmOther) return;
+  if (blocksCache[dmOther]) { toast("Unblock this user to send messages."); return; }
+  $("dmInput").value = "";
+  playSendSound();
+  const conv = dmConvId, other = dmOther;
+  const key = push(ref(db, "dms/" + conv + "/messages")).key;
+  pendingKeys.add(key);
+  let ok = false;
+  for (let attempt = 0; attempt < 2 && !ok; attempt++) {
+    try {
+      // My own sent-counter lives in my chat-list entry; the rules require it to go up by exactly 1.
+      let base;
+      if (attempt === 0) base = Math.max(Number(inboxCache[conv] && inboxCache[conv].sent) || 0, sentLocal[conv] || 0);
+      else base = Number((await get(ref(db, "inbox/" + uid + "/" + conv + "/sent"))).val()) || 0;
+      const n = base + 1;
+      sentLocal[conv] = n;
+      const ts = serverTimestamp(), preview = text.slice(0, 80);
+      const mine = "inbox/" + uid + "/" + conv + "/", theirs = "inbox/" + other + "/" + conv + "/";
+      const u = {};
+      u["dms/" + conv + "/messages/" + key] = { from: uid, text, ts };
+      u[mine + "with"] = other; u[mine + "last"] = preview; u[mine + "from"] = uid; u[mine + "ts"] = ts; u[mine + "sent"] = n;
+      u[theirs + "with"] = uid; u[theirs + "last"] = preview; u[theirs + "from"] = uid; u[theirs + "ts"] = ts; u[theirs + "n"] = n;
+      await update(ref(db), u);
+      ok = true;
+    } catch (err) {}
+  }
+  pendingKeys.delete(key);
+  if (ok) {
+    const t = document.querySelector('#dmMsgs .msg[data-key="' + key + '"] .tick');
+    if (t) t.textContent = " ✓";
+  } else {
+    delete sentLocal[conv];
+    const el = document.querySelector('#dmMsgs .msg[data-key="' + key + '"]');
+    if (el) el.remove();
+    toast("Message not sent. Check your connection, or you may not be able to message this user.");
+    if (dmConvId === conv) $("dmInput").value = text;
+  }
+});
+
+// ---- Block / unblock ----
+function askBlock(otherUid, name) {
+  askConfirm(
+    "Block " + name + "?",
+    "They won't be able to message you, and you won't be able to message them. You can unblock them any time in Settings → Blocked accounts. They won't be told.",
+    "Block",
+    async () => {
+      try {
+        await set(ref(db, "blocks/" + uid + "/" + otherUid), true);
+        toast(name + " blocked.");
+      } catch (e) { toast("Couldn't block. Check your connection."); }
+    });
+}
+async function unblockUser(otherUid, name) {
+  try {
+    await remove(ref(db, "blocks/" + uid + "/" + otherUid));
+    toast(name + " unblocked.");
+  } catch (e) { toast("Couldn't unblock. Check your connection."); }
+}
+$("dmUnblockBtn").onclick = () => { if (dmOther) unblockUser(dmOther, dmName || "User"); };
+$("dmMenuBtn").onclick = () => {
+  if (!dmOther) return;
+  const other = dmOther, name = dmName || "this user", blocked = !!blocksCache[other];
+  openMenu($("dmMenuBtn"), [
+    blocked
+      ? { label: "✅  Unblock " + name, fn: () => unblockUser(other, name) }
+      : { label: "🚫  Block " + name, danger: true, fn: () => askBlock(other, name) },
+    { label: "🗑  Delete chat", danger: true, fn: askDeleteDm }
+  ]);
+};
+
+// Delete chat = remove it from MY list and hide its history for me. The other person keeps everything.
+function askDeleteDm() {
+  const conv = dmConvId, name = dmName || "this user";
+  const e = inboxCache[conv];
+  if (!e) { toast("Nothing to delete yet."); return; }
+  askConfirm(
+    "Delete chat with " + name + "?",
+    "This removes the chat from your list and clears it for you only. " + name +
+      " keeps their messages. If they message you again, the chat comes back with only the new messages.",
+    "Delete chat",
+    async () => {
+      try {
+        await update(ref(db), {
+          ["inbox/" + uid + "/" + conv + "/clearedAt"]: serverTimestamp(),
+          ["inbox/" + uid + "/" + conv + "/seen"]: Number(e.n) || 0
+        });
+        toast("Chat deleted.");
+        leaveDm();
+      } catch (err) { toast("Couldn't delete. Check your connection."); }
+    });
+}
+
+// ---- Tap a name in a chat room -> Message / Block ----
+let usTarget = null;
+function openUserSheet(otherUid, name) {
+  if (!otherUid || otherUid === uid) return;
+  usTarget = { uid: otherUid, name: name || nameCache[otherUid] || "User" };
+  $("usName").textContent = usTarget.name;
+  $("usBlock").textContent = blocksCache[otherUid] ? "Unblock" : "Block";
+  $("userSheet").classList.add("open");
+}
+const closeUserSheet = () => $("userSheet").classList.remove("open");
+$("usClose").onclick = closeUserSheet;
+$("userSheet").onclick = (e) => { if (e.target.id === "userSheet") closeUserSheet(); };
+$("usMsg").onclick = () => {
+  const t = usTarget;
+  closeUserSheet();
+  $("sheet").classList.remove("open");
+  if (t) openDm(t.uid, inRoom ? "chat" : "lobby");
+};
+$("usBlock").onclick = () => {
+  const t = usTarget;
+  closeUserSheet();
+  if (!t) return;
+  if (blocksCache[t.uid]) unblockUser(t.uid, t.name);
+  else askBlock(t.uid, t.name);
+};
+
+// ---- Settings -> Blocked accounts ----
+function openBlocked() {
+  blockedOpen = true;
+  history.pushState({ blocked: true }, "");
+  renderBlocked();
+  show("blocked");
+}
+function closeBlocked() {
+  blockedOpen = false;
+  show("settings");
+}
+$("blockedRow").onclick = openBlocked;
+$("blockedBack").onclick = () => { if (CapApp) closeBlocked(); else history.back(); };
+function renderBlocked() {
+  const list = $("blockedList");
+  const ids = Object.keys(blocksCache);
+  list.innerHTML = "";
+  $("blockedEmpty").style.display = ids.length ? "none" : "";
+  ids.forEach((id) => {
+    const row = document.createElement("div"); row.className = "blkRow";
+    const av = document.createElement("div"); av.className = "av"; av.textContent = "?";
+    const nm = document.createElement("div"); nm.className = "nm"; nm.textContent = "…";
+    const btn = document.createElement("button"); btn.className = "smallBtn orange"; btn.textContent = "Unblock";
+    row.append(av, nm, btn);
+    list.append(row);
+    getName(id).then((n) => {
+      const name = n || "Unknown user";
+      nm.textContent = name; av.textContent = name[0].toUpperCase();
+      btn.onclick = () => unblockUser(id, name);
+    });
+    btn.onclick = () => unblockUser(id, "User");
+  });
+}
+
 // ---------- Delete account ----------
 function closeConfirm() {
   $("confirmSheet").classList.remove("open");
@@ -814,6 +1203,9 @@ $("delConfirm").onclick = async () => {
       await remove(ref(db, mem + "/greeted"));
       await remove(ref(db, mem + "/clearedAt"));
     }
+    stopPrivateListeners();
+    await remove(ref(db, "inbox/" + me));   // your chat list (the other person keeps their messages)
+    await remove(ref(db, "blocks/" + me));
     await remove(ref(db, "names/" + key));
     await remove(ref(db, "users/" + me));
     await deleteUser(auth.currentUser);
