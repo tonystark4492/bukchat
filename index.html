@@ -197,6 +197,11 @@
   .dmItem:active{background:var(--panel)}
   .dmItem .av{width:48px;height:48px;font-size:19px;flex:none}
   .avWrap{position:relative;flex:none}
+  .skel{display:flex;flex-direction:column;gap:12px;padding:6px 2px}
+  .skel i{display:block;height:44px;width:62%;border-radius:16px;background:linear-gradient(90deg,var(--panel) 0%,var(--panel2) 50%,var(--panel) 100%);background-size:200% 100%;animation:shim 1.1s linear infinite}
+  .skel i:nth-child(2){width:48%;align-self:flex-end}
+  .skel i:nth-child(3){width:70%}
+  @keyframes shim{from{background-position:200% 0}to{background-position:-200% 0}}
   .av{overflow:hidden}
   .av img{width:100%;height:100%;object-fit:cover;display:block}
   .msg .who{display:flex;align-items:center;gap:6px}
