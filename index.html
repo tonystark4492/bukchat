@@ -197,6 +197,32 @@
   .dmItem:active{background:var(--panel)}
   .dmItem .av{width:48px;height:48px;font-size:19px;flex:none}
   .avWrap{position:relative;flex:none}
+  .av{overflow:hidden}
+  .av img{width:100%;height:100%;object-fit:cover;display:block}
+  .msg .who{display:flex;align-items:center;gap:6px}
+  .msg .who .av{width:20px;height:20px;font-size:11px;flex:none}
+  #memList .av{flex:none}
+  #usAv{width:84px;height:84px;font-size:34px;margin:0 auto 10px}
+  #userSheet h3{text-align:center}
+  .pfHero{display:flex;flex-direction:column;align-items:center;padding:6px 0 14px}
+  .pfBig{width:132px;height:132px;font-size:54px;border:3px solid var(--accent);box-shadow:0 8px 30px rgba(0,0,0,.45)}
+  .pfName{font-size:20px;font-weight:800;margin-top:12px}
+  .pfHint{color:var(--muted);font-size:13px;margin-top:4px;min-height:18px}
+  .pfBtns{display:flex;gap:10px;justify-content:center;margin-bottom:26px}
+  .pfBtns .smallBtn{padding:12px 16px;font-size:14px;border-radius:12px}
+  .pfBtns .smallBtn:disabled{opacity:.4}
+  .pfTabs{display:flex;gap:8px;margin-bottom:14px;overflow-x:auto}
+  .pfTabs button{background:var(--panel2);color:var(--muted);border:1px solid var(--line);border-radius:20px;padding:8px 14px;font-size:13px;font-weight:700;flex:none}
+  .pfTabs button.on{color:#000;background:var(--accent);border-color:var(--accent)}
+  .avGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;padding-bottom:96px}
+  .avGrid button{padding:0;background:none;border-radius:50%;aspect-ratio:1;border:3px solid transparent;overflow:hidden;display:block}
+  .avGrid button img{width:100%;height:100%;display:block;border-radius:50%}
+  .avGrid button.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--bg),0 0 14px var(--accent)}
+  .pfBar{position:absolute;left:0;right:0;bottom:0;display:flex;gap:10px;padding:12px 16px calc(12px + env(safe-area-inset-bottom));background:var(--panel);border-top:1px solid var(--line)}
+  .pfBar[hidden]{display:none}
+  .pfBar button{flex:1;padding:14px;border-radius:14px;font-weight:800;font-size:16px;background:var(--panel2);color:var(--white)}
+  .pfBar button.pri{background:var(--accent);color:#000}
+  #profile .sBody{flex:1;overflow:auto;padding:22px 16px}
   .onl{position:absolute;right:0;bottom:0;width:13px;height:13px;border-radius:50%;background:var(--ok);border:2px solid var(--bg)}
   .onl[hidden]{display:none}
   .ct .s.online{color:var(--ok)}
@@ -332,6 +358,30 @@
 </section>
 
 <!-- 5. Settings -->
+<section class="screen" id="profile">
+  <header class="chatTop">
+    <button class="iconBtn" id="profileBack" aria-label="Back">‹</button>
+    <div class="ct"><div class="n">My profile</div></div>
+  </header>
+  <div class="sBody">
+    <div class="pfHero">
+      <div class="av pfBig" id="pfBig">?</div>
+      <div class="pfName" id="pfName"></div>
+      <div class="pfHint" id="pfHint"></div>
+    </div>
+    <div class="pfBtns">
+      <button class="smallBtn orange" id="pfUpload">📷 Upload photo</button>
+      <button class="smallBtn" id="pfRemove">Remove</button>
+    </div>
+    <input type="file" id="pfFile" accept="image/*" hidden>
+    <div class="label">OR PICK AN AVATAR</div>
+    <div class="pfTabs" id="pfTabs">
+      <button data-f="all" class="on">All</button><button data-f="m">Boys</button><button data-f="f">Girls</button><button data-f="c">Characters</button>
+    </div>
+    <div class="avGrid" id="avGrid"></div>
+  </div>
+  <div class="pfBar" id="pfBar" hidden><button id="pfCancel">Cancel</button><button class="pri" id="pfSave">Save</button></div>
+</section>
 <section class="screen" id="settings">
   <header class="chatTop">
     <button class="iconBtn" id="settingsBack" aria-label="Back">‹</button>
@@ -393,6 +443,7 @@
 
 <div id="sheet"><div class="inner"><h3>Members online</h3><ul id="memList"></ul></div></div>
 <div id="userSheet"><div class="inner">
+  <div class="av" id="usAv">?</div>
   <h3 id="usName"></h3>
   <button class="act pri" id="usMsg">💬 Message</button>
   <button class="act dng" id="usBlock">Block</button>
