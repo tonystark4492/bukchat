@@ -352,6 +352,22 @@
           ".validate": false
         }
       }
+    },
+    "profiles": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $uid && (!newData.exists() || root.child('users/' + auth.uid).exists())",
+        ".validate": "newData.hasChildren() && !(newData.hasChild('av') && newData.hasChild('ph'))",
+        "av": {
+          ".validate": "newData.isString() && newData.val().matches(/^a[0-9]{1,2}$/)"
+        },
+        "ph": {
+          ".validate": "newData.isString() && newData.val().beginsWith('data:image/jpeg;base64,') && newData.val().length > 100 && newData.val().length < 20000"
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
     }
   }
 }
