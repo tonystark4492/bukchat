@@ -1,4 +1,4 @@
-const CACHE = "bukchat-v2";
+const CACHE = "bukchat-v3";
 const FILES = ["./", "./index.html", "./app.js", "./config.js", "./logo.svg", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (e) => {
@@ -41,4 +41,15 @@ self.addEventListener("fetch", (e) => {
       return res;
     })));
   }
+});
+
+// Tapping a browser notification brings BUKCHAT forward and opens that chat.
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const data = e.notification.data;
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((cs) => {
+    const c = cs[0];
+    if (c) { c.postMessage({ type: "open", data }); return c.focus(); }
+    return self.clients.openWindow("./");
+  }));
 });
