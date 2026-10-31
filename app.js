@@ -317,6 +317,7 @@ function enterLobby() {
   renderRooms();
   const offs = ROOMS.map((room) =>
     onValue(ref(db, room.id + "/slots"), (snap) => {
+      slotsLive[room.id] = snap.exists() ? snap.val() : {};
       const n = snap.exists() ? Object.keys(snap.val()).length : 0;
       const el = document.querySelector('[data-room="' + room.id + '"]');
       if (!el) return;
@@ -369,66 +370,166 @@ async function loadMembership(room) {
   return { since, greeted, clearedAt, start: Math.max(since, clearedAt) };
 }
 
+// Opening a room is made to feel instant: the chat screen appears at once, and the
+// membership check, the "seat" in the room and the messages all load in parallel.
+const memCache = {}, msgCache = {}, slotsLive = {};
+let joinToken = 0, joining = false, slotUids = [];
+function openShell() {
+  inRoom = true;
+  if (lobbyUnsub) { lobbyUnsub(); lobbyUnsub = null; }
+  show("chat");
+  $("chatTitle").textContent = currentRoom.emoji + " " + currentRoom.name;
+  const live = slotsLive[currentRoom.id];
+  $("chatSub").textContent = live ? Object.keys(live).length + " online" : "";
+  $("msgs").innerHTML = '<div class="skel"><i></i><i></i><i></i></div>'; stick.set($("msgs"), true);
+  history.pushState({ chat: true }, "");
+}
 async function joinRoom(room, btn) {
-  btn.disabled = true;
-  currentRoom = room;
-  ROOM = room.id;
-  let membership;
-  try {
-    membership = await withTimeout(loadMembership(room), 12000);
-  } catch (e) {
-    btn.disabled = false;
-    toast("Couldn't open the chat. Check your connection and try again.");
-    return;
-  }
-  const ok = await claimSlot();
-  btn.disabled = false;
-  if (!ok) {
+  if (joining || inRoom) return;
+  const live = slotsLive[room.id];
+  if (live && Object.keys(live).length >= MAX_MEMBERS && !Object.values(live).includes(uid)) {
     toast(room.name + " is full (" + MAX_MEMBERS + "/" + MAX_MEMBERS + "). Try again later.");
     return;
   }
+  joining = true;
+  const token = ++joinToken;
+  currentRoom = room;
+  ROOM = room.id;
+  const mkey = uid + "/" + room.id;
+  const cachedMem = memCache[mkey];
+  openShell();
+  const slotP = claimSlot(room.id, mySlot);          // runs while the membership loads
+  let membership = cachedMem;
+  try {
+    if (!membership) membership = await withTimeout(loadMembership(room), 12000);
+  } catch (e) {
+    if (token === joinToken) {
+      joining = false; joinToken++; inRoom = false;
+      enterLobby();
+      toast("Couldn't open the chat. Check your connection and try again.");
+    }
+    slotP.then((i) => { if (typeof i === "number") releaseSlot(room.id, i); });
+    return;
+  }
+  if (token !== joinToken) {                           // user pressed back while loading
+    slotP.then((i) => { if (typeof i === "number") releaseSlot(room.id, i); });
+    return;
+  }
+  memCache[mkey] = membership;
+  joining = false;
   openChat(membership);
+  if (cachedMem) {                                     // quietly confirm nothing changed
+    loadMembership(room).then((m) => {
+      memCache[mkey] = m;
+      if (inRoom && currentRoom.id === room.id && currentMembership && m.start > currentMembership.start) resetChatView(m.start);
+    }).catch(() => {});
+  }
+  const slot = await slotP;
+  if (token !== joinToken) { if (typeof slot === "number") releaseSlot(room.id, slot); return; }
+  if (typeof slot === "number") { mySlot = slot; return; }
+  toast(slot === null ? room.name + " is full (" + MAX_MEMBERS + "/" + MAX_MEMBERS + "). Try again later." : "Couldn't open the chat. Check your connection and try again.");
+  leaveChat(true);
+}
+function releaseSlot(rid, i) {
+  const r = ref(db, rid + "/slots/" + i);
+  onDisconnect(r).cancel().catch(() => {});
+  remove(r).catch(() => {});
 }
 
-async function claimSlot() {
-  const order = [...Array(MAX_MEMBERS).keys()];
-  if (mySlot !== null) order.unshift(mySlot);
-  for (const i of order) {
-    const r = ref(db, ROOM + "/slots/" + i);
+// Takes a free seat in the room. Returns the seat number, null if the room is full,
+// or "net" if the connection failed. Starts with seats that look free (we already know from
+// the lobby), so it normally needs just one round trip.
+async function claimSlot(rid, prefer) {
+  let netFail = false;
+  const tryOne = async (i) => {
+    const r = ref(db, rid + "/slots/" + i);
     try {
       await withTimeout(set(r, uid), 8000);
-      await onDisconnect(r).remove();
-      mySlot = i;
+      onDisconnect(r).remove().catch(() => {});
       return true;
-    } catch (e) {}
+    } catch (e) {
+      if (!String(e?.code || e).toUpperCase().includes("PERMISSION")) netFail = true;
+      return false;
+    }
+  };
+  if (typeof prefer === "number" && (await tryOne(prefer))) return prefer;
+  if (netFail) return "net";
+  let live = slotsLive[rid];
+  const tried = new Set([prefer]);
+  for (let round = 0; round < 2; round++) {
+    if (!live || round === 1) {
+      try { const sn = await withTimeout(get(ref(db, rid + "/slots")), 8000); live = sn.exists() ? sn.val() : {}; }
+      catch (e) { return "net"; }
+    }
+    for (let i = 0; i < MAX_MEMBERS; i++) {
+      if (live[i] || tried.has(i)) continue;
+      tried.add(i);
+      if (await tryOne(i)) return i;
+      if (netFail) return "net";
+    }
   }
-  mySlot = null;
-  return false;
+  return null;
 }
 
 let currentMembership = null, msgOff = null;
 const pendingKeys = new Set();
 
 // Only messages from this member's visible start onward, newest 100 of those.
+// Messages already seen earlier this session are shown instantly from memory, and only
+// newer ones are downloaded.
+let shownKeys = new Set(), msgQueue = [], msgRaf = 0;
 function startMessageListener() {
   if (msgOff) { msgOff(); msgOff = null; }
+  shownKeys = new Set(); msgQueue = [];
+  const ck = uid + "/" + ROOM, start = currentMembership.start;
+  let from = start;
+  const c = msgCache[ck];
+  if (c && c.start === start && c.items.length) {
+    const last = c.items[c.items.length - 1].m.ts;
+    if (typeof last === "number") from = Math.max(from, last);
+    c.items.forEach((x) => { shownKeys.add(x.key); msgQueue.push([x.m, x.key]); });
+    flushMsgs(true);
+  } else delete msgCache[ck];
   const q = query(
     ref(db, ROOM + "/messages"),
     orderByChild("ts"),
-    startAt(currentMembership.start),
+    startAt(from),
     limitToLast(100)
   );
-  msgOff = onChildAdded(q, (snap) => addMessage(snap.val(), snap.key));
+  msgOff = onChildAdded(q, (snap) => queueMsg(snap.val(), snap.key));
+}
+function queueMsg(m, key) {
+  if (!m || typeof m.text !== "string") return;
+  if (key) { if (shownKeys.has(key)) return; shownKeys.add(key); }
+  msgQueue.push([m, key]);
+  if (!msgRaf) msgRaf = requestAnimationFrame(() => flushMsgs());
+}
+// Many messages arriving together are drawn in one go (one layout, one scroll).
+function flushMsgs(fromCache) {
+  msgRaf = 0;
+  const items = msgQueue; msgQueue = [];
+  if (!items.length || !inRoom) return;
+  const box = $("msgs");
+  const sk = box.querySelector(".skel"); if (sk) sk.remove();
+  const nearBottom = stick.get(box) || box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  const frag = document.createDocumentFragment();
+  const ck = uid + "/" + ROOM;
+  const cache = msgCache[ck] || (msgCache[ck] = { start: currentMembership.start, items: [] });
+  let anyMine = false;
+  items.forEach(([m, key]) => {
+    if (m.uid === uid) anyMine = true;
+    const el = buildMessage(m, key);
+    if (items.length > 3) el.style.animation = "none";
+    frag.append(el);
+    if (!fromCache && key && typeof m.ts === "number" && !pendingKeys.has(key)) cache.items.push({ key, m });
+  });
+  if (cache.items.length > 150) cache.items.splice(0, cache.items.length - 150);
+  box.append(frag);
+  while (box.childElementCount > 300) box.firstElementChild.remove(); // keep the page light
+  if (nearBottom || anyMine) box.scrollTop = box.scrollHeight;
 }
 
 function openChat(membership) {
-  inRoom = true;
-  if (lobbyUnsub) {
-    lobbyUnsub();
-    lobbyUnsub = null;
-  }
-  show("chat");
-  $("chatTitle").textContent = currentRoom.emoji + " " + currentRoom.name;
   $("msgs").innerHTML = ""; stick.set($("msgs"), true);
   if (!membership.greeted) {
     const greetings = [
@@ -446,54 +547,62 @@ function openChat(membership) {
     // Shown only once per account (not saved as a chat message).
     set(ref(db, ROOM + "/members/" + uid + "/greeted"), true).catch(() => {});
   }
-  history.pushState({ chat: true }, "");
 
-  unsubs.push(onValue(ref(db, ROOM + "/slots"), async (snap) => {
-    const uids = snap.exists() ? Object.values(snap.val()) : [];
-    $("memCount").textContent = uids.length + "/" + MAX_MEMBERS;
-    $("chatSub").textContent = uids.length + " online";
-    const names = await Promise.all(uids.map(getName));
-    const ul = $("memList");
-    ul.innerHTML = "";
-    names.forEach((n, i) => {
-      const li = document.createElement("li");
-      const av = document.createElement("div");
-      av.className = "av";
-      av.textContent = (n || "?")[0].toUpperCase();
-      paintAv(av, uids[i], n);
-      const nm = document.createElement("span");
-      nm.textContent = n || "…";
-      li.append(av, nm);
-      if (uids[i] === uid) {
-        const y = document.createElement("span");
-        y.className = "you";
-        y.textContent = "you";
-        li.append(y);
-        li.className = "me";
-      } else {
-        li.onclick = () => openUserSheet(uids[i], n);
-      }
-      ul.append(li);
-    });
+  unsubs.push(onValue(ref(db, ROOM + "/slots"), (snap) => {
+    slotUids = snap.exists() ? Object.values(snap.val()) : [];
+    $("memCount").textContent = slotUids.length + "/" + MAX_MEMBERS;
+    $("chatSub").textContent = slotUids.length + " online";
+    if ($("sheet").classList.contains("open")) renderMembers();   // names are fetched only when the list is opened
   }));
 
   currentMembership = membership;
   unsubs.push(() => { if (msgOff) { msgOff(); msgOff = null; } });
   startMessageListener();
 
+  let firstConn = true;
   unsubs.push(onValue(ref(db, ".info/connected"), async (s) => {
+    if (firstConn) { firstConn = false; return; }      // the seat was just taken while joining
     if (s.val() === true && inRoom) {
-      const ok = await claimSlot();
-      if (!ok) {
+      const rid = ROOM, r = await claimSlot(rid, mySlot);
+      if (!inRoom || rid !== ROOM) { if (typeof r === "number") releaseSlot(rid, r); return; }
+      if (typeof r === "number") mySlot = r;
+      else if (r === null) {
         toast(currentRoom.name + " became full. You were moved out.");
         leaveChat(true);
       }
     }
   }));
 
-  setTimeout(() => $("msgInput").focus(), 200);
 }
 
+let memRenderId = 0;
+async function renderMembers() {
+  const my = ++memRenderId, uids = slotUids.slice();
+  const names = await Promise.all(uids.map(getName));
+  if (my !== memRenderId) return;
+  const ul = $("memList");
+  ul.innerHTML = "";
+  names.forEach((n, i) => {
+    const li = document.createElement("li");
+    const av = document.createElement("div");
+    av.className = "av";
+    av.textContent = (n || "?")[0].toUpperCase();
+    paintAv(av, uids[i], n);
+    const nm = document.createElement("span");
+    nm.textContent = n || "…";
+    li.append(av, nm);
+    if (uids[i] === uid) {
+      const y = document.createElement("span");
+      y.className = "you";
+      y.textContent = "you";
+      li.append(y);
+      li.className = "me";
+    } else {
+      li.onclick = () => openUserSheet(uids[i], n);
+    }
+    ul.append(li);
+  });
+}
 async function getName(u) {
   if (nameCache[u]) return nameCache[u];
   try {
@@ -558,10 +667,7 @@ function autosize(t) {
   }, 300));
 });
 
-function addMessage(m, key) {
-  if (!m || typeof m.text !== "string") return;
-  const box = $("msgs");
-  const nearBottom = stick.get(box) || box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+function buildMessage(m, key) {
   const mine = m.uid === uid;
   const d = document.createElement("div");
   d.className = "msg " + (mine ? "mine" : "other");
@@ -590,9 +696,7 @@ function addMessage(m, key) {
     tm.append(tick);
   }
   d.append(who, body, tm);
-  box.append(d);
-  while (box.childElementCount > 300) box.firstElementChild.remove(); // keep the page light
-  if (nearBottom || mine) box.scrollTop = box.scrollHeight;
+  return d;
 }
 
 // ---------- Send sound (made in code, no sound file needed) ----------
@@ -646,6 +750,7 @@ $("sendForm").addEventListener("submit", async (e) => {
     if (t) t.textContent = " ✓";
   } catch (err) {
     pendingKeys.delete(key);
+    msgQueue = msgQueue.filter((x) => x[1] !== key);
     const el = document.querySelector('.msg[data-key="' + key + '"]');
     if (el) el.remove();
     toast("Message not sent. Check your connection.");
@@ -657,6 +762,8 @@ $("sendForm").addEventListener("submit", async (e) => {
 async function leaveChat(fromPop) {
   if (!inRoom) return;
   inRoom = false;
+  joinToken++; joining = false;
+  msgQueue = [];
   unsubs.forEach((u) => {
     try { u(); } catch (e) {}
   });
@@ -701,7 +808,7 @@ window.addEventListener("popstate", () => {
   if (dmOpen) { leaveDm(); return; }
   if (inRoom) leaveChat(true);
 });
-$("membersBtn").onclick = () => $("sheet").classList.add("open");
+$("membersBtn").onclick = () => { $("sheet").classList.add("open"); renderMembers(); };
 $("sheet").onclick = (e) => {
   if (e.target.id === "sheet") $("sheet").classList.remove("open");
 };
@@ -907,7 +1014,20 @@ function getProfile(u, force) {
   profCache[u] = { t: Date.now(), p };
   return p;
 }
-function avSrc(p) { return p ? (p.ph || (p.av ? avatarURL(p.av) : "")) : ""; }
+const phURLs = new Map();
+function phSrc(d) {            // a short blob: address instead of the long data string (lighter when shown many times)
+  let u = phURLs.get(d);
+  if (!u) {
+    try {
+      const bin = atob(d.split(",")[1]), a = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+      u = URL.createObjectURL(new Blob([a], { type: "image/jpeg" }));
+    } catch (e) { u = d; }
+    phURLs.set(d, u);
+  }
+  return u;
+}
+function avSrc(p) { return p ? (p.ph ? phSrc(p.ph) : (p.av ? avatarURL(p.av) : "")) : ""; }
 function drawAv(el, p, name) {
   const src = avSrc(p);
   el.textContent = "";
@@ -1055,6 +1175,7 @@ function askConfirm(title, text, okLabel, onOk) {
 $("clearCancel").onclick = () => $("clearSheet").classList.remove("open");
 
 async function markCleared(room) {
+  delete memCache[uid + "/" + room.id]; delete msgCache[uid + "/" + room.id];
   const cRef = ref(db, room.id + "/members/" + uid + "/clearedAt");
   await set(cRef, serverTimestamp());
   return Number((await get(cRef)).val()) || Date.now();
@@ -1062,6 +1183,7 @@ async function markCleared(room) {
 function resetChatView(start) {
   if (!inRoom || !currentMembership) return;
   currentMembership.start = Math.max(currentMembership.start, start);
+  delete msgCache[uid + "/" + ROOM];
   $("msgs").innerHTML = ""; stick.set($("msgs"), true);
   startMessageListener();
 }
@@ -1161,6 +1283,7 @@ function stopPrivateListeners() {
   Object.values(peerOff).forEach((f) => f()); peerOff = {}; peerPresence = {};
   stopTypingWatch(); clearTimeout(typingIdleTimer); lastTypingSent = 0;
   inboxCache = {}; blocksCache = {}; inboxReady = false;
+  Object.keys(msgCache).forEach((k) => delete msgCache[k]); Object.keys(memCache).forEach((k) => delete memCache[k]);
   dmOpen = false; blockedOpen = false; dmOther = null; dmConvId = null;
   $("dmBadge").hidden = true;
   $("dmList").innerHTML = "";
