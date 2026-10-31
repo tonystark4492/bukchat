@@ -416,6 +416,7 @@ async function joinRoom(room, btn) {
     return;
   }
   memCache[mkey] = membership;
+  watchRoomNotif(room);
   joining = false;
   openChat(membership);
   if (cachedMem) {                                     // quietly confirm nothing changed
@@ -1254,6 +1255,7 @@ const dmVisible = (e) => e && e.with && e.ts && e.ts > (Number(e.clearedAt) || 0
 function startPrivateListeners() {
   if (inboxOff || !uid) return;
   startPresence();
+  initNotifs(); startRoomNotifs();
   inboxReady = false;
   inboxOff = onValue(ref(db, "inbox/" + uid), (snap) => {
     const next = snap.val() || {};
@@ -1261,8 +1263,8 @@ function startPrivateListeners() {
       for (const c of Object.keys(next)) {
         const e = next[c], was = inboxCache[c];
         if ((Number(e.n) || 0) > ((was && Number(was.n)) || 0) && e.with &&
-            !blocksCache[e.with] && !(dmOpen && dmConvId === c)) {
-          getName(e.with).then((nm) => toast("💬 New message from " + (nm || "someone")));
+            e.from !== uid && !blocksCache[e.with]) {
+          getName(e.with).then((nm) => notifyIncoming({ kind: "dm", key: c, from: e.with, name: nm || "Someone", text: e.last || "New message" }));
         }
       }
     }
@@ -1283,6 +1285,7 @@ function stopPrivateListeners() {
   Object.values(peerOff).forEach((f) => f()); peerOff = {}; peerPresence = {};
   stopTypingWatch(); clearTimeout(typingIdleTimer); lastTypingSent = 0;
   inboxCache = {}; blocksCache = {}; inboxReady = false;
+  stopRoomNotifs();
   Object.keys(msgCache).forEach((k) => delete msgCache[k]); Object.keys(memCache).forEach((k) => delete memCache[k]);
   dmOpen = false; blockedOpen = false; dmOther = null; dmConvId = null;
   $("dmBadge").hidden = true;
@@ -1618,6 +1621,210 @@ function renderBlocked() {
     btn.onclick = () => unblockUser(id, "User");
   });
 }
+
+// ---------- Notifications ----------
+// Two switches in Settings (chatrooms / personal chats) plus a sound switch.
+//  - App open:        a small popup at the top (picture, name, preview) and a soft chime.
+//  - App in background (still running): a normal Android notification (APK) or browser notification (PWA).
+//  - App fully closed: Android can't wake the app without a push server, which needs a paid plan.
+// Nothing here uses extra storage; it listens only for NEW messages and ignores your own,
+// blocked people, and the chat you are looking at.
+const LN = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
+const nPref = (k) => { try { return localStorage.getItem("bukchat-n-" + k) !== "off"; } catch (e) { return true; } };
+const nSave = (k, v) => { try { localStorage.setItem("bukchat-n-" + k, v ? "on" : "off"); } catch (e) {} };
+let nRooms = nPref("rooms"), nDm = nPref("dm"), nSound = nPref("sound");
+let appInactive = false, sysPerm = "unknown", notifReady = false, pendingOpen = null;
+const inBackground = () => document.hidden || appInactive;
+const nid = (str) => { let h = 7; for (const ch of String(str)) h = (h * 31 + ch.charCodeAt(0)) | 0; return (Math.abs(h) % 2000000000) + 1; };
+
+function renderNotifUI() {
+  $("nRoomsToggle").textContent = nRooms ? "On" : "Off";
+  $("nDmToggle").textContent = nDm ? "On" : "Off";
+  $("nSoundToggle").textContent = nSound ? "On" : "Off";
+  const t = $("nPermText"), b = $("nPermBtn");
+  b.hidden = true; t.textContent = "";
+  if (sysPerm === "granted") t.innerHTML = "Phone permission: <b>allowed ✓</b>";
+  else if (sysPerm === "denied") { t.innerHTML = "Phone permission: <b class=\"bad\">blocked</b>"; b.textContent = "How to fix"; b.hidden = false; }
+  else if (sysPerm === "prompt") { t.textContent = "Phone permission needed for alerts outside the app"; b.textContent = "Allow"; b.hidden = false; }
+  else if (sysPerm === "none") t.textContent = "This browser can't show background alerts.";
+}
+async function checkPerm() {
+  try {
+    if (LN) { const r = await LN.checkPermissions(); sysPerm = r.display === "granted" ? "granted" : r.display === "denied" ? "denied" : "prompt"; }
+    else if ("Notification" in window) sysPerm = Notification.permission === "default" ? "prompt" : Notification.permission;
+    else sysPerm = "none";
+  } catch (e) {}
+  renderNotifUI();
+}
+async function askPerm() {
+  if (sysPerm === "denied") { toast("Open Android Settings → Apps → BUKCHAT → Notifications and turn them on."); return; }
+  try {
+    if (LN) await LN.requestPermissions();
+    else if ("Notification" in window) await Notification.requestPermission();
+  } catch (e) {}
+  await checkPerm();
+}
+$("nPermBtn").onclick = askPerm;
+[["nRoomsToggle", "rooms"], ["nDmToggle", "dm"], ["nSoundToggle", "sound"]].forEach(([id, k]) => {
+  $(id).onclick = () => {
+    const v = !(k === "rooms" ? nRooms : k === "dm" ? nDm : nSound);
+    if (k === "rooms") nRooms = v; else if (k === "dm") nDm = v; else nSound = v;
+    nSave(k, v); renderNotifUI();
+    if (k === "sound" && v) playNotifySound();
+    if (v && k !== "sound" && sysPerm === "prompt") askPerm();   // first time on: ask the phone for permission
+  };
+});
+function initNotifs() {
+  if (notifReady) return;
+  notifReady = true;
+  if (LN) {
+    LN.createChannel({ id: "messages", name: "Messages", description: "New message alerts", importance: 4, sound: "soft_chime.wav", vibration: false, visibility: 1 }).catch(() => {});
+    // same popup, but a silent sound file, used when "Notification sound" is Off
+    LN.createChannel({ id: "messages_quiet", name: "Messages (silent)", description: "New message alerts without sound", importance: 4, sound: "silent.wav", vibration: false, visibility: 1 }).catch(() => {});
+    LN.addListener("localNotificationActionPerformed", (a) => openFromNotif(a && a.notification && a.notification.extra));
+  }
+  checkPerm().then(() => {
+    let asked = false; try { asked = localStorage.getItem("bukchat-n-asked") === "1"; } catch (e) {}
+    if (LN && sysPerm === "prompt" && !asked) {
+      try { localStorage.setItem("bukchat-n-asked", "1"); } catch (e) {}
+      setTimeout(askPerm, 3500);                         // after the lobby has settled
+    }
+  });
+  if (pendingOpen) { const x = pendingOpen; pendingOpen = null; setTimeout(() => openFromNotif(x), 600); }
+}
+if (CapApp && CapApp.addListener) CapApp.addListener("appStateChange", (st) => {
+  appInactive = !st.isActive;
+  if (st.isActive && LN && LN.removeAllDeliveredNotifications) LN.removeAllDeliveredNotifications().catch(() => {});
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && LN && LN.removeAllDeliveredNotifications) LN.removeAllDeliveredNotifications().catch(() => {});
+});
+if (navigator.serviceWorker) navigator.serviceWorker.addEventListener("message", (ev) => {
+  if (ev.data && ev.data.type === "open") openFromNotif(ev.data.data);
+});
+
+// A soft two-note chime made in code (quiet on purpose).
+function playNotifySound() {
+  if (!nSound) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = audioCtx;
+    if (ctx.state === "suspended") ctx.resume();
+    const t = ctx.currentTime;
+    [[1046.5, 0, 0.5, 0.07], [1568, 0.1, 0.55, 0.06]].forEach(([f, st, dur, vol]) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = "sine";
+      o.frequency.setValueAtTime(f, t + st);
+      g.gain.setValueAtTime(0.0001, t + st);
+      g.gain.exponentialRampToValueAtTime(vol, t + st + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + st + dur);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(t + st); o.stop(t + st + dur + 0.02);
+    });
+  } catch (e) {}
+}
+
+// The popup shown while the app is open.
+let bannerTimer = null, bannerAct = null;
+function hideBanner() { clearTimeout(bannerTimer); $("nBanner").classList.remove("show"); }
+function showBanner(n) {
+  $("nbAv").textContent = (n.name[0] || "?").toUpperCase();
+  paintAv($("nbAv"), n.from, n.name);
+  const nm = $("nbName"); nm.textContent = n.name;
+  if (n.label) { const sm = document.createElement("small"); sm.textContent = n.label; nm.append(sm); }
+  $("nbMsg").textContent = n.text;
+  bannerAct = () => openFromNotif(n.kind === "dm" ? { kind: "dm", from: n.from } : { kind: "room", id: n.key });
+  $("nBanner").classList.add("show");
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(hideBanner, 4500);
+}
+$("nBanner").addEventListener("click", () => { const a = bannerAct; hideBanner(); if (a) a(); });
+(() => {                                                 // swipe sideways or up to dismiss
+  let x0 = 0, y0 = 0;
+  const b = $("nBanner");
+  b.addEventListener("touchstart", (e) => { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; }, { passive: true });
+  b.addEventListener("touchend", (e) => {
+    const t = e.changedTouches[0];
+    if (Math.abs(t.clientX - x0) > 50 || y0 - t.clientY > 25) { bannerAct = null; hideBanner(); }
+  }, { passive: true });
+})();
+
+// System notification (when the app is in the background). Same id = replaces the old one,
+// and a short wait between alerts for the same chat keeps busy rooms from buzzing non-stop.
+const sysLast = {}, sysTimer = {};
+function postSystem(n) {
+  const id = nid(n.key);
+  const send = (x) => {
+    sysLast[n.key] = Date.now();
+    const title = x.kind === "room" ? x.name + " · " + x.label : x.name;
+    const extra = x.kind === "dm" ? { kind: "dm", from: x.from } : { kind: "room", id: x.key };
+    if (LN) {
+      LN.schedule({ notifications: [{ id, title, body: x.text, channelId: nSound ? "messages" : "messages_quiet", smallIcon: "ic_stat_bukchat", iconColor: "#FF7A00", extra }] }).catch(() => {});
+    } else if ("Notification" in window && Notification.permission === "granted" && navigator.serviceWorker) {
+      navigator.serviceWorker.ready.then((r) => r.showNotification(title, {
+        body: x.text, tag: "bukchat-" + id, icon: "icon-192.png", badge: "icon-192.png", silent: !nSound, data: extra, renotify: true
+      })).catch(() => {});
+    }
+  };
+  const gap = n.kind === "room" ? 20000 : 4000, wait = (sysLast[n.key] || 0) + gap - Date.now();
+  clearTimeout(sysTimer[n.key]);
+  if (wait <= 0) send(n); else sysTimer[n.key] = setTimeout(() => send(n), wait);
+}
+const bannerLast = {};
+function notifyIncoming(n) {
+  if (!uid || n.from === uid || blocksCache[n.from]) return;
+  if (!(n.kind === "dm" ? nDm : nRooms)) return;
+  n.text = String(n.text || "").replace(/\s+/g, " ").slice(0, 120);
+  if (inBackground()) { postSystem(n); return; }
+  if (n.kind === "dm" && dmOpen && dmConvId === n.key) return;          // already looking at it
+  if (n.kind === "room" && inRoom && ROOM === n.key) return;
+  if (n.kind === "room") {                                              // at most one popup per room every 8 s
+    if (Date.now() - (bannerLast[n.key] || 0) < 8000) return;
+    bannerLast[n.key] = Date.now();
+  }
+  showBanner(n);
+  playNotifySound();
+}
+async function openFromNotif(x) {
+  if (!x || !x.kind) return;
+  if (!uid) { pendingOpen = x; return; }
+  closeMenu(); ["confirmSheet", "clearSheet", "userSheet", "sheet"].forEach((id) => $(id).classList.remove("open"));
+  if (dmOpen) { if (x.kind === "dm" && dmOther === x.from) return; leaveDm(); }
+  if (inRoom) { if (x.kind === "room" && ROOM === x.id) return; await leaveChat(true); }
+  profileOpen = blockedOpen = settingsOpen = false;
+  if (x.kind === "dm") openDm(x.from, "lobby");
+  else { const r = ROOMS.find((q) => q.id === x.id); if (r) joinRoom(r); }
+}
+
+// Watch for new messages in the rooms you belong to (only rooms you have opened before).
+let roomNotifOff = {}, srvOffset = 0;
+async function startRoomNotifs() {
+  const me = uid;
+  try { srvOffset = Number((await get(ref(db, ".info/serverTimeOffset"))).val()) || 0; } catch (e) {}
+  await Promise.all(ROOMS.map(async (room) => {
+    try {
+      const sn = await get(ref(db, room.id + "/members/" + me + "/since"));
+      if (sn.exists() && uid === me) watchRoomNotif(room);
+    } catch (e) {}
+  }));
+}
+function watchRoomNotif(room) {
+  if (!uid || roomNotifOff[room.id]) return;
+  const from = Date.now() + srvOffset - 2000;
+  const q = query(ref(db, room.id + "/messages"), orderByChild("ts"), startAt(from), limitToLast(5));
+  roomNotifOff[room.id] = onChildAdded(q, (snap) => {
+    const m = snap.val();
+    if (!m || typeof m.text !== "string" || !m.uid || m.uid === uid) return;
+    if (typeof m.ts === "number" && m.ts < from) return;
+    notifyIncoming({ kind: "room", key: room.id, from: m.uid, name: m.name || "Someone", text: m.text, label: room.emoji + " " + room.name });
+  });
+}
+function stopRoomNotifs() {
+  Object.values(roomNotifOff).forEach((f) => { try { f(); } catch (e) {} });
+  roomNotifOff = {};
+  hideBanner();
+}
+renderNotifUI();
 
 // ---------- Online status, last seen and typing ----------
 //   presence/<uid>            {online, last}  written only by its owner; readable by people you have
