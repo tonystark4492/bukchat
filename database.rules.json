@@ -55,8 +55,8 @@
         ],
         ".read": "auth != null && root.child('users/' + auth.uid).exists()",
         "$msg": {
-          ".write": "auth != null && root.child('users/' + auth.uid).exists() && !data.exists()",
-          ".validate": "newData.hasChildren(['uid', 'name', 'text', 'ts']) && newData.child('uid').val() === auth.uid && newData.child('name').val() === root.child('users/' + auth.uid + '/name').val() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('ts').val() === now && (!newData.hasChild('k') || (newData.child('k').val() === 'i' && newData.child('w').isNumber() && newData.child('h').isNumber() && !newData.hasChild('d')) || (newData.child('k').val() === 'a' && newData.child('d').isNumber() && !newData.hasChild('w') && !newData.hasChild('h')))",
+          ".write": "auth != null && root.child('users/' + auth.uid).exists() && (!data.exists() || (!newData.exists() && data.child('uid').val() === auth.uid))",
+          ".validate": "newData.hasChildren(['uid', 'name', 'text', 'ts']) && newData.child('uid').val() === auth.uid && newData.child('name').val() === root.child('users/' + auth.uid + '/name').val() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('ts').val() === now && (!newData.hasChild('k') || (newData.child('k').val() === 'i' && newData.child('w').isNumber() && newData.child('h').isNumber() && !newData.hasChild('d')) || (newData.child('k').val() === 'a' && newData.child('d').isNumber() && !newData.hasChild('w') && !newData.hasChild('h'))) && ((newData.hasChildren(['rn', 'rk', 'rt']) && newData.child('rn').val() === root.child('chatroom1/messages/' + newData.child('rk').val() + '/name').val() && ((root.child('chatroom1/messages/' + newData.child('rk').val() + '/text').val().length <= 80 && root.child('chatroom1/messages/' + newData.child('rk').val() + '/text').val() === newData.child('rt').val()) || (root.child('chatroom1/messages/' + newData.child('rk').val() + '/text').val().length > 80 && newData.child('rt').val().length === 80 && root.child('chatroom1/messages/' + newData.child('rk').val() + '/text').val().beginsWith(newData.child('rt').val())))) || (!newData.hasChild('rn') && !newData.hasChild('rk') && !newData.hasChild('rt')))",
           "uid": {},
           "name": {},
           "text": {},
@@ -72,6 +72,15 @@
           },
           "d": {
             ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 61"
+          },
+          "rn": {
+            ".validate": "newData.isString() && newData.val().length <= 40"
+          },
+          "rk": {
+            ".validate": "newData.isString() && newData.val().length >= 6 && newData.val().length <= 30 && newData.val().matches(/^[-A-Za-z0-9_]+$/)"
+          },
+          "rt": {
+            ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 80"
           },
           "$other": {
             ".validate": false
@@ -113,8 +122,8 @@
         ],
         ".read": "auth != null && root.child('users/' + auth.uid).exists()",
         "$msg": {
-          ".write": "auth != null && root.child('users/' + auth.uid).exists() && !data.exists()",
-          ".validate": "newData.hasChildren(['uid', 'name', 'text', 'ts']) && newData.child('uid').val() === auth.uid && newData.child('name').val() === root.child('users/' + auth.uid + '/name').val() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('ts').val() === now && (!newData.hasChild('k') || (newData.child('k').val() === 'i' && newData.child('w').isNumber() && newData.child('h').isNumber() && !newData.hasChild('d')) || (newData.child('k').val() === 'a' && newData.child('d').isNumber() && !newData.hasChild('w') && !newData.hasChild('h')))",
+          ".write": "auth != null && root.child('users/' + auth.uid).exists() && (!data.exists() || (!newData.exists() && data.child('uid').val() === auth.uid))",
+          ".validate": "newData.hasChildren(['uid', 'name', 'text', 'ts']) && newData.child('uid').val() === auth.uid && newData.child('name').val() === root.child('users/' + auth.uid + '/name').val() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('ts').val() === now && (!newData.hasChild('k') || (newData.child('k').val() === 'i' && newData.child('w').isNumber() && newData.child('h').isNumber() && !newData.hasChild('d')) || (newData.child('k').val() === 'a' && newData.child('d').isNumber() && !newData.hasChild('w') && !newData.hasChild('h'))) && ((newData.hasChildren(['rn', 'rk', 'rt']) && newData.child('rn').val() === root.child('room_desi/messages/' + newData.child('rk').val() + '/name').val() && ((root.child('room_desi/messages/' + newData.child('rk').val() + '/text').val().length <= 80 && root.child('room_desi/messages/' + newData.child('rk').val() + '/text').val() === newData.child('rt').val()) || (root.child('room_desi/messages/' + newData.child('rk').val() + '/text').val().length > 80 && newData.child('rt').val().length === 80 && root.child('room_desi/messages/' + newData.child('rk').val() + '/text').val().beginsWith(newData.child('rt').val())))) || (!newData.hasChild('rn') && !newData.hasChild('rk') && !newData.hasChild('rt')))",
           "uid": {},
           "name": {},
           "text": {},
@@ -130,6 +139,15 @@
           },
           "d": {
             ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 61"
+          },
+          "rn": {
+            ".validate": "newData.isString() && newData.val().length <= 40"
+          },
+          "rk": {
+            ".validate": "newData.isString() && newData.val().length >= 6 && newData.val().length <= 30 && newData.val().matches(/^[-A-Za-z0-9_]+$/)"
+          },
+          "rt": {
+            ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 80"
           },
           "$other": {
             ".validate": false
@@ -171,8 +189,8 @@
         ],
         ".read": "auth != null && root.child('users/' + auth.uid).exists()",
         "$msg": {
-          ".write": "auth != null && root.child('users/' + auth.uid).exists() && !data.exists()",
-          ".validate": "newData.hasChildren(['uid', 'name', 'text', 'ts']) && newData.child('uid').val() === auth.uid && newData.child('name').val() === root.child('users/' + auth.uid + '/name').val() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('ts').val() === now && (!newData.hasChild('k') || (newData.child('k').val() === 'i' && newData.child('w').isNumber() && newData.child('h').isNumber() && !newData.hasChild('d')) || (newData.child('k').val() === 'a' && newData.child('d').isNumber() && !newData.hasChild('w') && !newData.hasChild('h')))",
+          ".write": "auth != null && root.child('users/' + auth.uid).exists() && (!data.exists() || (!newData.exists() && data.child('uid').val() === auth.uid))",
+          ".validate": "newData.hasChildren(['uid', 'name', 'text', 'ts']) && newData.child('uid').val() === auth.uid && newData.child('name').val() === root.child('users/' + auth.uid + '/name').val() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('ts').val() === now && (!newData.hasChild('k') || (newData.child('k').val() === 'i' && newData.child('w').isNumber() && newData.child('h').isNumber() && !newData.hasChild('d')) || (newData.child('k').val() === 'a' && newData.child('d').isNumber() && !newData.hasChild('w') && !newData.hasChild('h'))) && ((newData.hasChildren(['rn', 'rk', 'rt']) && newData.child('rn').val() === root.child('room_afroarab/messages/' + newData.child('rk').val() + '/name').val() && ((root.child('room_afroarab/messages/' + newData.child('rk').val() + '/text').val().length <= 80 && root.child('room_afroarab/messages/' + newData.child('rk').val() + '/text').val() === newData.child('rt').val()) || (root.child('room_afroarab/messages/' + newData.child('rk').val() + '/text').val().length > 80 && newData.child('rt').val().length === 80 && root.child('room_afroarab/messages/' + newData.child('rk').val() + '/text').val().beginsWith(newData.child('rt').val())))) || (!newData.hasChild('rn') && !newData.hasChild('rk') && !newData.hasChild('rt')))",
           "uid": {},
           "name": {},
           "text": {},
@@ -188,6 +206,15 @@
           },
           "d": {
             ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 61"
+          },
+          "rn": {
+            ".validate": "newData.isString() && newData.val().length <= 40"
+          },
+          "rk": {
+            ".validate": "newData.isString() && newData.val().length >= 6 && newData.val().length <= 30 && newData.val().matches(/^[-A-Za-z0-9_]+$/)"
+          },
+          "rt": {
+            ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 80"
           },
           "$other": {
             ".validate": false
@@ -229,8 +256,8 @@
         ],
         ".read": "auth != null && root.child('users/' + auth.uid).exists()",
         "$msg": {
-          ".write": "auth != null && root.child('users/' + auth.uid).exists() && !data.exists()",
-          ".validate": "newData.hasChildren(['uid', 'name', 'text', 'ts']) && newData.child('uid').val() === auth.uid && newData.child('name').val() === root.child('users/' + auth.uid + '/name').val() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('ts').val() === now && (!newData.hasChild('k') || (newData.child('k').val() === 'i' && newData.child('w').isNumber() && newData.child('h').isNumber() && !newData.hasChild('d')) || (newData.child('k').val() === 'a' && newData.child('d').isNumber() && !newData.hasChild('w') && !newData.hasChild('h')))",
+          ".write": "auth != null && root.child('users/' + auth.uid).exists() && (!data.exists() || (!newData.exists() && data.child('uid').val() === auth.uid))",
+          ".validate": "newData.hasChildren(['uid', 'name', 'text', 'ts']) && newData.child('uid').val() === auth.uid && newData.child('name').val() === root.child('users/' + auth.uid + '/name').val() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('ts').val() === now && (!newData.hasChild('k') || (newData.child('k').val() === 'i' && newData.child('w').isNumber() && newData.child('h').isNumber() && !newData.hasChild('d')) || (newData.child('k').val() === 'a' && newData.child('d').isNumber() && !newData.hasChild('w') && !newData.hasChild('h'))) && ((newData.hasChildren(['rn', 'rk', 'rt']) && newData.child('rn').val() === root.child('room_americas/messages/' + newData.child('rk').val() + '/name').val() && ((root.child('room_americas/messages/' + newData.child('rk').val() + '/text').val().length <= 80 && root.child('room_americas/messages/' + newData.child('rk').val() + '/text').val() === newData.child('rt').val()) || (root.child('room_americas/messages/' + newData.child('rk').val() + '/text').val().length > 80 && newData.child('rt').val().length === 80 && root.child('room_americas/messages/' + newData.child('rk').val() + '/text').val().beginsWith(newData.child('rt').val())))) || (!newData.hasChild('rn') && !newData.hasChild('rk') && !newData.hasChild('rt')))",
           "uid": {},
           "name": {},
           "text": {},
@@ -246,6 +273,15 @@
           },
           "d": {
             ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 61"
+          },
+          "rn": {
+            ".validate": "newData.isString() && newData.val().length <= 40"
+          },
+          "rk": {
+            ".validate": "newData.isString() && newData.val().length >= 6 && newData.val().length <= 30 && newData.val().matches(/^[-A-Za-z0-9_]+$/)"
+          },
+          "rt": {
+            ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 80"
           },
           "$other": {
             ".validate": false
@@ -287,8 +323,8 @@
         ],
         ".read": "auth != null && root.child('users/' + auth.uid).exists()",
         "$msg": {
-          ".write": "auth != null && root.child('users/' + auth.uid).exists() && !data.exists()",
-          ".validate": "newData.hasChildren(['uid', 'name', 'text', 'ts']) && newData.child('uid').val() === auth.uid && newData.child('name').val() === root.child('users/' + auth.uid + '/name').val() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('ts').val() === now && (!newData.hasChild('k') || (newData.child('k').val() === 'i' && newData.child('w').isNumber() && newData.child('h').isNumber() && !newData.hasChild('d')) || (newData.child('k').val() === 'a' && newData.child('d').isNumber() && !newData.hasChild('w') && !newData.hasChild('h')))",
+          ".write": "auth != null && root.child('users/' + auth.uid).exists() && (!data.exists() || (!newData.exists() && data.child('uid').val() === auth.uid))",
+          ".validate": "newData.hasChildren(['uid', 'name', 'text', 'ts']) && newData.child('uid').val() === auth.uid && newData.child('name').val() === root.child('users/' + auth.uid + '/name').val() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('ts').val() === now && (!newData.hasChild('k') || (newData.child('k').val() === 'i' && newData.child('w').isNumber() && newData.child('h').isNumber() && !newData.hasChild('d')) || (newData.child('k').val() === 'a' && newData.child('d').isNumber() && !newData.hasChild('w') && !newData.hasChild('h'))) && ((newData.hasChildren(['rn', 'rk', 'rt']) && newData.child('rn').val() === root.child('room_asiapacific/messages/' + newData.child('rk').val() + '/name').val() && ((root.child('room_asiapacific/messages/' + newData.child('rk').val() + '/text').val().length <= 80 && root.child('room_asiapacific/messages/' + newData.child('rk').val() + '/text').val() === newData.child('rt').val()) || (root.child('room_asiapacific/messages/' + newData.child('rk').val() + '/text').val().length > 80 && newData.child('rt').val().length === 80 && root.child('room_asiapacific/messages/' + newData.child('rk').val() + '/text').val().beginsWith(newData.child('rt').val())))) || (!newData.hasChild('rn') && !newData.hasChild('rk') && !newData.hasChild('rt')))",
           "uid": {},
           "name": {},
           "text": {},
@@ -304,6 +340,15 @@
           },
           "d": {
             ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 61"
+          },
+          "rn": {
+            ".validate": "newData.isString() && newData.val().length <= 40"
+          },
+          "rk": {
+            ".validate": "newData.isString() && newData.val().length >= 6 && newData.val().length <= 30 && newData.val().matches(/^[-A-Za-z0-9_]+$/)"
+          },
+          "rt": {
+            ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 80"
           },
           "$other": {
             ".validate": false
@@ -329,8 +374,8 @@
           ],
           ".read": "auth != null && (root.child('dms/' + $cid + '/meta/a').val() === auth.uid || root.child('dms/' + $cid + '/meta/b').val() === auth.uid)",
           "$m": {
-            ".write": "auth != null && !data.exists() && (root.child('dms/' + $cid + '/meta/a').val() === auth.uid || root.child('dms/' + $cid + '/meta/b').val() === auth.uid) && !root.child('blocks/' + (root.child('dms/' + $cid + '/meta/a').val() === auth.uid ? root.child('dms/' + $cid + '/meta/b').val() : root.child('dms/' + $cid + '/meta/a').val()) + '/' + auth.uid).exists() && !root.child('blocks/' + auth.uid + '/' + (root.child('dms/' + $cid + '/meta/a').val() === auth.uid ? root.child('dms/' + $cid + '/meta/b').val() : root.child('dms/' + $cid + '/meta/a').val())).exists()",
-            ".validate": "newData.hasChildren(['from', 'text', 'ts']) && newData.child('from').val() === auth.uid && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('ts').val() === now && (!newData.hasChild('k') || (newData.child('k').val() === 'i' && newData.child('w').isNumber() && newData.child('h').isNumber() && !newData.hasChild('d')) || (newData.child('k').val() === 'a' && newData.child('d').isNumber() && !newData.hasChild('w') && !newData.hasChild('h')))",
+            ".write": "auth != null && ((!data.exists() && (root.child('dms/' + $cid + '/meta/a').val() === auth.uid || root.child('dms/' + $cid + '/meta/b').val() === auth.uid) && !root.child('blocks/' + (root.child('dms/' + $cid + '/meta/a').val() === auth.uid ? root.child('dms/' + $cid + '/meta/b').val() : root.child('dms/' + $cid + '/meta/a').val()) + '/' + auth.uid).exists() && !root.child('blocks/' + auth.uid + '/' + (root.child('dms/' + $cid + '/meta/a').val() === auth.uid ? root.child('dms/' + $cid + '/meta/b').val() : root.child('dms/' + $cid + '/meta/a').val())).exists()) || (data.exists() && !newData.exists() && data.child('from').val() === auth.uid))",
+            ".validate": "newData.hasChildren(['from', 'text', 'ts']) && newData.child('from').val() === auth.uid && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('ts').val() === now && (!newData.hasChild('k') || (newData.child('k').val() === 'i' && newData.child('w').isNumber() && newData.child('h').isNumber() && !newData.hasChild('d')) || (newData.child('k').val() === 'a' && newData.child('d').isNumber() && !newData.hasChild('w') && !newData.hasChild('h'))) && ((newData.hasChildren(['rf', 'rk', 'rt']) && newData.child('rf').val() === root.child('dms/' + $cid + '/messages/' + newData.child('rk').val() + '/from').val() && ((root.child('dms/' + $cid + '/messages/' + newData.child('rk').val() + '/text').val().length <= 80 && root.child('dms/' + $cid + '/messages/' + newData.child('rk').val() + '/text').val() === newData.child('rt').val()) || (root.child('dms/' + $cid + '/messages/' + newData.child('rk').val() + '/text').val().length > 80 && newData.child('rt').val().length === 80 && root.child('dms/' + $cid + '/messages/' + newData.child('rk').val() + '/text').val().beginsWith(newData.child('rt').val())))) || (!newData.hasChild('rf') && !newData.hasChild('rk') && !newData.hasChild('rt')))",
             "from": {},
             "text": {},
             "ts": {},
@@ -345,6 +390,15 @@
             },
             "d": {
               ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 61"
+            },
+            "rf": {
+              ".validate": "newData.isString() && newData.val().length <= 40"
+            },
+            "rk": {
+              ".validate": "newData.isString() && newData.val().length >= 6 && newData.val().length <= 30 && newData.val().matches(/^[-A-Za-z0-9_]+$/)"
+            },
+            "rt": {
+              ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 80"
             },
             "$other": {
               ".validate": false
@@ -570,6 +624,18 @@
         },
         "$other": {
           ".validate": false
+        }
+      }
+    },
+    "hidden": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid",
+        "$scope": {
+          ".validate": "$scope.matches(/^[A-Za-z0-9_-]{3,70}$/)",
+          "$key": {
+            ".validate": "newData.val() === true && $key.matches(/^[-A-Za-z0-9_]{6,30}$/)"
+          }
         }
       }
     }
