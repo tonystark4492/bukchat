@@ -209,6 +209,72 @@
   .permRow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:2px 4px;margin:-4px 0 10px;font-size:12px;color:var(--muted)}
   .permRow b{color:var(--ok)}
   .permRow b.bad{color:var(--danger)}
+  .bnav{display:flex;flex:none;background:var(--panel);border-top:1px solid var(--line)}
+  .bn{flex:1;padding:9px 6px 8px;background:transparent;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;font-weight:800;letter-spacing:.4px;position:relative}
+  .bn svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .bn.on{color:var(--accent)}
+  .bn:active{transform:scale(.96)}
+  .bn .badge{position:absolute;top:3px;left:calc(50% + 6px);min-width:18px;height:18px;font-size:11px}
+  .stAdd{width:100%;display:flex;align-items:center;gap:14px;padding:12px;border-radius:16px;background:var(--panel);border:1px dashed var(--accent);color:var(--white);text-align:left}
+  .stAdd .plus{width:50px;height:50px;border-radius:50%;background:var(--accent);color:#000;font-size:30px;font-weight:700;display:grid;place-items:center;flex:none;line-height:1}
+  .stT{display:flex;flex-direction:column;gap:3px;min-width:0}
+  .stT b{font-size:16px} .stT small{color:var(--muted);font-size:12px}
+  .stItem{width:100%;display:flex;align-items:center;gap:14px;padding:10px;border-radius:16px;background:transparent;color:var(--white);text-align:left}
+  .stItem:active{background:var(--panel)}
+  .ring{width:58px;height:58px;border-radius:50%;padding:3px;background:var(--accent);flex:none;display:grid;place-items:center}
+  .ring.seen{background:#3a3a3a}
+  .ring .av{width:100%;height:100%;border:2px solid var(--bg);font-size:20px}
+  .stItem .nm{font-weight:800;font-size:16px} .stItem .sb{color:var(--muted);font-size:13px;margin-top:2px}
+  .stFrame{position:relative;width:100%;height:100%;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center}
+  .stFrame img,.stFrame video{width:100%;height:100%;object-fit:contain;display:block}
+  .stText{padding:24px;font-size:28px;font-weight:800;text-align:center;line-height:1.25;word-break:break-word;max-height:100%;overflow:hidden;text-shadow:0 1px 6px rgba(0,0,0,.25)}
+  .stCap{position:absolute;left:0;right:0;bottom:0;padding:34px 18px 22px;font-size:18px;font-weight:700;text-align:center;word-break:break-word;background:linear-gradient(transparent,rgba(0,0,0,.6));text-shadow:0 1px 4px rgba(0,0,0,.6)}
+  .stHint{color:var(--muted);font-size:14px;padding:20px;text-align:center}
+  #storyNew .sBody{flex:1;overflow:auto;padding:16px}
+  .snKinds{display:flex;gap:8px;margin-bottom:14px}
+  .snKinds button,.seg button{flex:1;padding:12px 6px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);color:var(--white);font-weight:800;font-size:14px}
+  .snKinds button.on,.seg button.on{background:var(--accent);border-color:var(--accent);color:#000}
+  .seg{display:flex;gap:8px}
+  .snPrevWrap{width:min(62vw,260px);aspect-ratio:9/16;margin:0 auto 10px;border-radius:18px;overflow:hidden;border:1px solid var(--line);max-height:46dvh}
+  .snNote{text-align:center;color:var(--accent);font-size:13px;min-height:18px;margin-bottom:8px}
+  .snField{text-align:left;font-size:16px;margin-bottom:10px;resize:none}
+  .snRow{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;justify-content:center}
+  .snRow button{width:40px;height:40px;border-radius:50%;background:var(--panel2);border:2px solid transparent;font-size:20px;padding:0;display:grid;place-items:center}
+  .snRow button.on{border-color:var(--accent)}
+  .snRow button{box-shadow:inset 0 0 0 1px rgba(255,255,255,.22)}
+  .snRow.bgs button{border-radius:12px}
+  #snHideBox{margin-top:10px;max-height:34dvh;overflow:auto}
+  .hideRow{display:flex;align-items:center;gap:12px;padding:8px 4px;border-bottom:1px solid var(--line)}
+  .hideRow .av{width:36px;height:36px;font-size:15px}
+  .hideRow span.nm{flex:1;font-weight:700}
+  .hideRow input{width:22px;height:22px;accent-color:var(--accent)}
+  #storyView{background:#000;padding:0}
+  .svBars{display:flex;gap:4px;padding:calc(env(safe-area-inset-top) + 8px) 10px 0;z-index:3}
+  .svBars i{flex:1;height:3px;border-radius:2px;background:rgba(255,255,255,.3);overflow:hidden;display:block}
+  .svBars i b{display:block;height:100%;width:0;background:#fff}
+  .svBars i.done b{width:100%}
+  .svHead{display:flex;align-items:center;gap:10px;padding:10px 10px 8px;z-index:3}
+  .svHead .av{width:38px;height:38px;font-size:16px;flex:none}
+  .svWho{flex:1;min-width:0;display:flex;flex-direction:column}
+  .svWho b{font-size:15px;color:#fff;text-shadow:0 1px 3px #000} .svWho small{color:#d0d0d0;font-size:12px}
+  .svHead .iconBtn{background:rgba(0,0,0,.35);color:#fff}
+  .svStage{position:relative;flex:1;min-height:0}
+  .svTap{position:absolute;top:0;bottom:0;z-index:2}
+  .svTap.l{left:0;width:32%} .svTap.r{right:0;width:68%}
+  .svViews{margin:8px auto calc(10px + env(safe-area-inset-bottom));padding:10px 20px;border-radius:20px;background:rgba(255,255,255,.14);color:#fff;font-weight:800;font-size:14px;z-index:3}
+  .svViews[hidden]{display:none}
+  #svDel[hidden]{display:none}
+  .svReply{display:flex;gap:8px;padding:8px 10px calc(10px + env(safe-area-inset-bottom));z-index:3}
+  .svReply[hidden]{display:none}
+  .svReply .field{text-align:left;padding:12px 16px;font-size:16px;flex:1;min-width:0;border-radius:24px;background:rgba(30,30,30,.9)}
+  .svReply button{width:46px;height:46px;border-radius:50%;background:var(--accent);color:#000;font-size:18px;flex:none}
+  #stViewers{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:flex-end;z-index:70}
+  #stViewers.open{display:flex}
+  #stViewers .inner{width:100%;max-height:60dvh;overflow:auto;background:var(--panel);border-radius:24px 24px 0 0;padding:20px 20px calc(20px + env(safe-area-inset-bottom));border-top:2px solid var(--accent)}
+  #stViewers h3{margin:0 0 10px}
+  #stViewList{list-style:none;margin:0;padding:0}
+  #stViewList li{display:flex;align-items:center;gap:12px;padding:9px 2px;border-bottom:1px solid var(--line)}
+  #stViewList .av{width:38px;height:38px;font-size:15px} #stViewList .nm{flex:1;font-weight:700} #stViewList small{color:var(--muted)}
   .skel{display:flex;flex-direction:column;gap:12px;padding:6px 2px}
   .skel i{display:block;height:44px;width:62%;border-radius:16px;background:linear-gradient(90deg,var(--panel) 0%,var(--panel2) 50%,var(--panel) 100%);background-size:200% 100%;animation:shim 1.1s linear infinite}
   .skel i:nth-child(2){width:48%;align-self:flex-end}
@@ -322,10 +388,6 @@
     <div class="me">Hi, <strong id="meName"></strong></div>
     <button class="iconBtn" id="lobbyMenuBtn" aria-label="Menu">⋮</button>
   </header>
-  <div class="tabs">
-    <button class="tab on" id="tabRooms" data-tab="rooms">Chat Rooms</button>
-    <button class="tab" id="tabChats" data-tab="chats">Chats <span class="badge" id="dmBadge" hidden>0</span></button>
-  </div>
   <div class="body">
     <div class="pane" id="roomsPane">
       <div class="label">CHATROOMS</div>
@@ -340,8 +402,71 @@
       <div id="dmList"></div>
       <div class="emptyNote" id="dmEmpty">No private chats yet.<br>Type a username above, or tap a name inside a chat room, to say hi.</div>
     </div>
+    <div class="pane" id="storiesPane" hidden>
+      <button class="stAdd" id="stAddBtn" type="button"><span class="plus">+</span><span class="stT"><b>Add to your story</b><small>Photo, video or text · disappears after 24 hours</small></span></button>
+      <div id="stMine"></div>
+      <div class="label" style="margin-top:20px">RECENT STORIES <button class="smallBtn" id="stRefresh" type="button" style="float:right;margin-top:-6px">↻ Refresh</button></div>
+      <div id="stList"></div>
+      <div class="emptyNote" id="stEmpty" hidden>No stories to show right now.</div>
+      <div class="emptyNote" id="stLoading">Loading…</div>
+    </div>
+  </div>
+  <nav class="bnav" aria-label="Main">
+    <button class="bn on" id="tabRooms" data-tab="rooms"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg>Rooms</button>
+    <button class="bn" id="tabChats" data-tab="chats"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.8-4 3.5-6 7-6s6.2 2 7 6"/></svg>Chats<span class="badge" id="dmBadge" hidden>0</span></button>
+    <button class="bn" id="tabStories" data-tab="stories"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" stroke-dasharray="3.2 2.6"/><circle cx="12" cy="12" r="3.2"/></svg>Stories</button>
+  </nav>
+</section>
+
+<!-- Stories: new story -->
+<section class="screen" id="storyNew">
+  <header class="chatTop">
+    <button class="iconBtn" id="snBack" aria-label="Back">‹</button>
+    <div class="ct"><div class="n">New story</div></div>
+    <button class="smallBtn orange" id="snPost" type="button" disabled>Post</button>
+  </header>
+  <div class="sBody">
+    <div class="snKinds">
+      <button type="button" data-k="p">📷 Photo</button><button type="button" data-k="v">🎥 Video</button><button type="button" data-k="t">✍️ Text</button>
+    </div>
+    <input type="file" id="snFile" hidden>
+    <div class="snPrevWrap"><div class="stFrame" id="snFrame"><div class="stHint" id="snHint">Choose Photo, Video or Text above</div></div></div>
+    <div class="snNote" id="snNote"></div>
+    <textarea class="field snField" id="snTx" maxlength="280" rows="3" placeholder="Type your story…" hidden></textarea>
+    <input class="field snField" id="snCap" maxlength="120" placeholder="Add a caption…" autocomplete="off" hidden>
+    <div class="snTools" id="snTools" hidden>
+      <div class="snRow" id="snEmo"></div>
+      <div class="snRow" id="snCols"></div>
+      <div class="snRow" id="snBgs" hidden></div>
+    </div>
+    <div class="label" style="margin-top:20px">WHO CAN SEE IT</div>
+    <div class="seg" id="snAud">
+      <button type="button" data-a="a" class="on">Everyone</button><button type="button" data-a="f">Friends only</button><button type="button" data-a="h">Hide from…</button>
+    </div>
+    <div class="note" id="snAudNote" style="text-align:left;margin-top:8px">Everyone on BUKCHAT can see it.</div>
+    <div id="snHideBox" hidden></div>
   </div>
 </section>
+
+<!-- Stories: viewer -->
+<section class="screen" id="storyView">
+  <div class="svBars" id="svBars"></div>
+  <div class="svHead">
+    <div class="av" id="svAv">?</div>
+    <div class="svWho"><b id="svName"></b><small id="svTime"></small></div>
+    <button class="iconBtn" id="svDel" aria-label="Delete story" hidden>🗑</button>
+    <button class="iconBtn" id="svClose" aria-label="Close">✕</button>
+  </div>
+  <div class="svStage"><div class="stFrame" id="svFrame"></div>
+    <div class="svTap l" id="svPrev"></div><div class="svTap r" id="svNext"></div>
+  </div>
+  <button class="svViews" id="svViews" type="button" hidden>👁 <span id="svViewN">0</span> viewers</button>
+  <form class="svReply" id="svReplyForm" autocomplete="off">
+    <input class="field" id="svReplyInput" maxlength="300" placeholder="Reply privately…">
+    <button type="submit" id="svReplyBtn" aria-label="Send reply">➤</button>
+  </form>
+</section>
+<div id="stViewers"><div class="inner"><h3>Viewers</h3><ul id="stViewList"></ul><div class="emptyNote" id="stViewEmpty" style="padding:14px">Nobody yet.</div></div></div>
 
 <!-- 4b. Private chat (DM) -->
 <section class="screen" id="dm">
