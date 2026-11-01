@@ -7,7 +7,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import {
   getDatabase, ref, get, set, push, onValue, onChildAdded, remove,
-  onDisconnect, serverTimestamp, query, limitToLast, orderByChild, startAt, update
+  onDisconnect, serverTimestamp, query, limitToLast, orderByChild, startAt, update, onChildRemoved
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
 import { firebaseConfig } from "./config.js";
 
@@ -497,7 +497,10 @@ function startMessageListener() {
     startAt(from),
     limitToLast(100)
   );
-  msgOff = onChildAdded(q, (snap) => queueMsg(snap.val(), snap.key));
+  const offAdd = onChildAdded(q, (snap) => queueMsg(snap.val(), snap.key));
+  const offRem = onChildRemoved(q, (snap) => removeMsgEl({ t: "r", id: ROOM }, snap.key));
+  msgOff = () => { offAdd(); offRem(); };
+  loadHidden({ t: "r", id: ROOM });
 }
 function queueMsg(m, key) {
   if (!m || typeof m.text !== "string") return;
@@ -518,6 +521,7 @@ function flushMsgs(fromCache) {
   const cache = msgCache[ck] || (msgCache[ck] = { start: currentMembership.start, items: [] });
   let anyMine = false;
   items.forEach(([m, key]) => {
+    if (isHidden({ t: "r", id: ROOM }, key)) return;      // I deleted this one "for me"
     if (m.uid === uid) anyMine = true;
     const el = buildMessage(m, key);
     if (items.length > 3) el.style.animation = "none";
@@ -685,8 +689,8 @@ function buildMessage(m, key) {
     who.classList.add("tap");
     who.onclick = () => openUserSheet(m.uid, m.name);
   }
-  const body = m.k ? mediaBody(m, key, { t: "r", id: ROOM }, d) : document.createElement("div");
-  if (!m.k) body.textContent = m.text;
+  const rScope = { t: "r", id: ROOM };
+  const body = m.k ? mediaBody(m, key, rScope, d) : textBody(m.text);
   const tm = document.createElement("div");
   tm.className = "tm";
   tm.textContent = m.ts ? fmtTime(m.ts) : "";
@@ -697,7 +701,8 @@ function buildMessage(m, key) {
     tick.textContent = pendingKeys.has(key) ? " 🕓" : " ✓";
     tm.append(tick);
   }
-  d.append(who, body, tm);
+  if (typeof m.rt === "string" && m.rt) d.append(who, quoteEl(m, rScope), body, tm); else d.append(who, body, tm);
+  decorateMsg(d, m, key, rScope, mine, m.uid, m.name);
   return d;
 }
 
@@ -744,9 +749,10 @@ $("sendForm").addEventListener("submit", async (e) => {
   $("msgInput").value = ""; autosize($("msgInput"));
   const msgRef = push(ref(db, ROOM + "/messages"));
   const key = msgRef.key;
+  const rx = takeReply({ t: "r", id: ROOM });
   pendingKeys.add(key);
   try {
-    await set(msgRef, { uid, name: myName, text, ts: serverTimestamp() });
+    await set(msgRef, Object.assign({ uid, name: myName, text, ts: serverTimestamp() }, rx));
     pendingKeys.delete(key);
     const t = document.querySelector('.msg[data-key="' + key + '"] .tick');
     if (t) t.textContent = " ✓";
@@ -764,7 +770,7 @@ $("sendForm").addEventListener("submit", async (e) => {
 async function leaveChat(fromPop) {
   if (!inRoom) return;
   inRoom = false;
-  cancelRec(); stopAllAudio();
+  cancelRec(); stopAllAudio(); clearReply(); closeMsgSheets();
   joinToken++; joining = false;
   msgQueue = [];
   unsubs.forEach((u) => {
@@ -791,6 +797,7 @@ function goBack() {
   for (const id of ["confirmSheet", "clearSheet", "userSheet", "sheet", "stViewers"]) {
     if ($(id).classList.contains("open")) { $(id).classList.remove("open"); pauseSt(false); return; }
   }
+  if (closeMsgSheets()) return;
   if (closeMediaOverlays()) return;
   if (sv) { closeStoryView(); return; }
   if (snOpen) { closeStoryNew(); return; }
@@ -1418,8 +1425,11 @@ async function openDm(other, from) {
   if (dmOff) { dmOff(); dmOff = null; }
   const start = Number(inboxCache[conv] && inboxCache[conv].clearedAt) || 0;
   const q = query(ref(db, "dms/" + conv + "/messages"), orderByChild("ts"), startAt(start), limitToLast(100));
-  dmOff = onChildAdded(q, (snap) => addDmMessage(snap.val(), snap.key),
+  loadHidden({ t: "d", id: conv });
+  const offA = onChildAdded(q, (snap) => addDmMessage(snap.val(), snap.key),
     () => { if (dmConvId === conv) toast("Can't open this chat right now."); });
+  const offR = onChildRemoved(q, (snap) => { if (dmConvId === conv) removeMsgEl({ t: "d", id: conv }, snap.key); });
+  dmOff = () => { offA(); offR(); };
   startTypingWatch();
   markDmSeen();
   if (!blocksCache[other]) setTimeout(() => { if (dmOpen) $("dmInput").focus(); }, 250);
@@ -1428,7 +1438,7 @@ async function openDm(other, from) {
 function leaveDm() {
   if (!dmOpen) return;
   dmOpen = false;
-  cancelRec(); stopAllAudio();
+  cancelRec(); stopAllAudio(); clearReply(); closeMsgSheets();
   clearMyTyping(dmConvId); stopTypingWatch();
   if (dmOff) { dmOff(); dmOff = null; }
   dmOther = null; dmConvId = null;
@@ -1444,11 +1454,12 @@ function addDmMessage(m, key) {
   if (key && box.querySelector('[data-key="' + key + '"]')) return; // already shown
   const nearBottom = stick.get(box) || box.scrollHeight - box.scrollTop - box.clientHeight < 120;
   const mine = m.from === uid;
+  const dScope = { t: "d", id: dmConvId };
+  if (isHidden(dScope, key)) return;                      // I deleted this one "for me"
   const d = document.createElement("div");
   d.className = "msg " + (mine ? "mine" : "other");
   if (key) d.dataset.key = key;
-  const body = m.k ? mediaBody(m, key, { t: "d", id: dmConvId }, d) : document.createElement("div");
-  if (!m.k) body.textContent = m.text;
+  const body = m.k ? mediaBody(m, key, dScope, d) : textBody(m.text);
   const tm = document.createElement("div");
   tm.className = "tm";
   tm.textContent = m.ts ? fmtTime(m.ts) : "";
@@ -1458,7 +1469,8 @@ function addDmMessage(m, key) {
     tick.textContent = pendingKeys.has(key) ? " 🕓" : " ✓";
     tm.append(tick);
   }
-  d.append(body, tm);
+  if (typeof m.rt === "string" && m.rt) d.append(quoteEl(m, dScope), body, tm); else d.append(body, tm);
+  decorateMsg(d, m, key, dScope, mine, m.from, mine ? myName : dmName);
   box.append(d);
   while (box.childElementCount > 300) box.firstElementChild.remove();
   if (nearBottom || mine) box.scrollTop = box.scrollHeight;
@@ -1514,7 +1526,7 @@ $("dmForm").addEventListener("submit", async (e) => {
   const conv = dmConvId, other = dmOther;
   const key = push(ref(db, "dms/" + conv + "/messages")).key;
   pendingKeys.add(key);
-  const ok = await dmWrite(conv, other, key, text);
+  const ok = await dmWrite(conv, other, key, text, takeReply({ t: "d", id: conv }));
   pendingKeys.delete(key);
   if (ok) {
     const t = document.querySelector('#dmMsgs .msg[data-key="' + key + '"] .tick');
@@ -1527,6 +1539,247 @@ $("dmForm").addEventListener("submit", async (e) => {
     if (dmConvId === conv) { $("dmInput").value = text; autosize($("dmInput")); }
   }
 });
+
+// ---------- Message options (reply / copy / delete) and links ----------
+// Everything here works for rooms (scope.t = "r") and private chats (scope.t = "d").
+const hiddenSets = {};                       // "r<room>" / "d<conv>" -> Set of keys I deleted "for me"
+function isHidden(scope, key) { const s = hiddenSets[scope.t + scope.id]; return !!(s && key && s.has(key)); }
+function boxOf(scope) { return $(scope.t === "r" ? "msgs" : "dmMsgs"); }
+async function loadHidden(scope) {
+  const sk = scope.t + scope.id;
+  try {
+    const v = (await get(ref(db, "hidden/" + uid + "/" + scope.id))).val();
+    const set0 = hiddenSets[sk] || (hiddenSets[sk] = new Set());
+    if (v && typeof v === "object") Object.keys(v).forEach((k) => set0.add(k));
+    set0.forEach((k) => removeMsgEl(scope, k, true));       // anything already drawn that I had deleted
+  } catch (e) {}
+}
+function removeMsgEl(scope, key, keepCache) {
+  const el = boxOf(scope).querySelector('.msg[data-key="' + key + '"]');
+  if (el) el.remove();
+  if (scope.t === "r") {
+    const c = msgCache[uid + "/" + scope.id];
+    if (c) c.items = c.items.filter((x) => x.key !== key);
+    msgQueue = msgQueue.filter((x) => x[1] !== key);
+  }
+  mediaCache.delete(mcKey(scope, key));
+}
+
+// ---- links ----
+const URL_RE = /\b(?:https?:\/\/|www\.)[^\s<>"'`]+/gi;
+function ytId(u) {
+  const h = u.hostname.replace(/^(www|m|music)\./, "");
+  let id = "";
+  if (h === "youtu.be") id = u.pathname.slice(1).split("/")[0];
+  else if (h === "youtube.com" || h === "youtube-nocookie.com") {
+    if (u.pathname === "/watch") id = u.searchParams.get("v") || "";
+    else { const m = u.pathname.match(/^\/(?:shorts|embed|live|v)\/([^/?]+)/); if (m) id = m[1]; }
+  }
+  return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : "";
+}
+// null = not a safe web link (it stays plain text)
+function parseLink(raw) {
+  let s = raw;
+  for (;;) {
+    const c = s.slice(-1);
+    if (!c) return null;
+    if (/[.,;:!?'"\]}>*]/.test(c)) { s = s.slice(0, -1); continue; }
+    if (c === ")" && (s.match(/\(/g) || []).length < (s.match(/\)/g) || []).length) { s = s.slice(0, -1); continue; }
+    break;
+  }
+  const full = /^www\./i.test(s) ? "https://" + s : s;
+  if (full.length > 400) return null;
+  let u; try { u = new URL(full); } catch (e) { return null; }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+  const host = u.hostname;
+  if (!host || !host.includes(".") || /\.(local|internal|lan)$/i.test(host)) return null;
+  let warn = "";
+  if (u.username || u.password) warn = "This link contains a hidden login part, which scammers use to disguise the real website.";
+  else if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.startsWith("[")) warn = "This link goes to a number address instead of a normal website name.";
+  else if (host.split(".").some((l) => l.startsWith("xn--"))) warn = "This website name uses look-alike characters. Make sure you trust it.";
+  else if (u.port && u.port !== "80" && u.port !== "443") warn = "This link uses an unusual port. Make sure you trust it.";
+  return { url: u.href, shown: s, host: host.replace(/^www\./, ""), warn, yt: ytId(u) };
+}
+function linkify(el, text) {
+  let last = 0, yt = "", m;
+  URL_RE.lastIndex = 0;
+  while ((m = URL_RE.exec(text))) {
+    const info = parseLink(m[0]);
+    if (!info) continue;
+    const end = m.index + info.shown.length;
+    if (m.index > last) el.append(document.createTextNode(text.slice(last, m.index)));
+    const a = document.createElement("a");
+    a.className = "lnk"; a.href = info.url; a.rel = "noopener noreferrer nofollow"; a.textContent = info.shown;
+    a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); if (Date.now() < pressUntil) return; info.yt ? openYt(info.yt) : askLink(info); };
+    el.append(a);
+    if (info.yt && !yt) yt = info.yt;
+    last = end; URL_RE.lastIndex = end;
+  }
+  if (last < text.length) el.append(document.createTextNode(text.slice(last)));
+  return yt;
+}
+function textBody(text) {
+  const d = document.createElement("div");
+  if (!/https?:\/\/|www\./i.test(text)) { d.textContent = text; return d; }
+  const yt = linkify(d, text);
+  if (yt) {
+    const c = document.createElement("div"); c.className = "ytChip";
+    const i = document.createElement("i"); i.textContent = "▶";
+    const t = document.createElement("span"); t.textContent = "Watch YouTube video";
+    c.append(i, t); c.onclick = (e) => { e.stopPropagation(); if (Date.now() >= pressUntil) openYt(yt); };
+    d.append(c);
+  }
+  return d;
+}
+function openExternal(url) {
+  const B = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Browser;
+  const fallback = () => { window.open(url, "_blank", "noopener,noreferrer"); };
+  if (B && B.open) { B.open({ url, toolbarColor: "#000000" }).catch(fallback); } else fallback();
+}
+let linkPending = null;
+function askLink(info) {
+  linkPending = info;
+  $("lkHost").textContent = info.host;
+  $("lkUrl").textContent = info.url.length > 160 ? info.url.slice(0, 157) + "…" : info.url;
+  $("lkWarn").hidden = !info.warn; $("lkWarn").textContent = "⚠️ " + info.warn;
+  $("linkSheet").classList.add("open");
+}
+$("lkOpen").onclick = () => { const i = linkPending; $("linkSheet").classList.remove("open"); linkPending = null; if (i) openExternal(i.url); };
+$("lkNo").onclick = () => { $("linkSheet").classList.remove("open"); linkPending = null; };
+let ytCur = "";
+function openYt(id) {
+  if (!/^[A-Za-z0-9_-]{11}$/.test(id)) return;
+  stopAllAudio(); ytCur = id;
+  $("ytFrame").src = "https://www.youtube-nocookie.com/embed/" + id + "?autoplay=1&playsinline=1&rel=0";
+  $("ytView").classList.add("open");
+  history.pushState({ img: true }, "");
+}
+$("ytX").onclick = () => closeMediaOverlays();
+$("ytOpen").onclick = () => { if (ytCur) openExternal("https://www.youtube.com/watch?v=" + ytCur); };
+$("linkSheet").onclick = (e) => { if (e.target.id === "linkSheet") { $("linkSheet").classList.remove("open"); linkPending = null; } };
+
+// ---- replies ----
+let replyTo = null;       // { sk, key, rn, rf, rt }
+function barFor(scope) { return $(scope.t === "r" ? "replyBar" : "dmReplyBar"); }
+function setReply(scope, info) {
+  clearReply();
+  replyTo = Object.assign({ sk: scope.t + scope.id }, info);
+  const bar = barFor(scope);
+  bar.querySelector("b").textContent = info.rn === myName || info.rf === uid ? "You" : (info.rn || "Reply");
+  bar.querySelector("span").textContent = info.rt;
+  bar.hidden = false;
+  $(scope.t === "r" ? "msgInput" : "dmInput").focus();
+}
+function clearReply() { replyTo = null; $("replyBar").hidden = true; $("dmReplyBar").hidden = true; }
+document.querySelectorAll(".replyBar .rbx").forEach((b) => { b.onclick = clearReply; });
+// the extra fields a new message carries when I am replying (and the reply is cleared)
+function takeReply(scope) {
+  const r = replyTo;
+  if (!r || r.sk !== scope.t + scope.id) { clearReply(); return {}; }
+  clearReply();
+  return scope.t === "r" ? { rn: r.rn, rk: r.rk, rt: r.rt } : { rf: r.rf, rk: r.rk, rt: r.rt };
+}
+function quoteEl(m, scope) {
+  const q = document.createElement("div"); q.className = "quote";
+  const n = document.createElement("div"); n.className = "qn";
+  n.textContent = scope.t === "d" ? (m.rf === uid ? "You" : (dmName || "User")) : (m.rn === myName ? "You" : (m.rn || "?"));
+  const t = document.createElement("div"); t.className = "qt"; t.textContent = m.rt;
+  q.append(n, t);
+  q.onclick = (e) => {
+    e.stopPropagation();
+    if (Date.now() < pressUntil) return;
+    const el = boxOf(scope).querySelector('.msg[data-key="' + String(m.rk).replace(/"/g, "") + '"]');
+    if (!el) { toast("The original message isn't on screen."); return; }
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.classList.add("hl"); setTimeout(() => el.classList.remove("hl"), 1300);
+  };
+  return q;
+}
+
+// ---- long-press menu ----
+let pressUntil = 0, menuMsg = null;
+function closeMsgSheets() {
+  let any = false;
+  for (const id of ["msgMenu", "delSheet", "linkSheet"]) { if ($(id).classList.contains("open")) { $(id).classList.remove("open"); any = true; } }
+  return any;
+}
+function initPress(box) {
+  let tmr = 0, sx = 0, sy = 0;
+  const stop = () => { clearTimeout(tmr); tmr = 0; };
+  const find = (e) => { const el = e.target.closest && e.target.closest(".msg"); return el && el._m ? el : null; };
+  box.addEventListener("touchstart", (e) => {
+    const el = find(e); if (!el || e.touches.length !== 1) return;
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+    stop(); tmr = setTimeout(() => { tmr = 0; pressUntil = Date.now() + 700; if (navigator.vibrate) { try { navigator.vibrate(12); } catch (x) {} } openMsgMenu(el); }, 450);
+  }, { passive: true });
+  box.addEventListener("touchmove", (e) => { if (tmr && (Math.abs(e.touches[0].clientX - sx) > 10 || Math.abs(e.touches[0].clientY - sy) > 10)) stop(); }, { passive: true });
+  ["touchend", "touchcancel"].forEach((n) => box.addEventListener(n, stop, { passive: true }));
+  box.addEventListener("contextmenu", (e) => { const el = find(e); if (el) { e.preventDefault(); pressUntil = Date.now() + 700; openMsgMenu(el); } });
+  box.addEventListener("click", (e) => { if (Date.now() < pressUntil) { e.preventDefault(); e.stopPropagation(); } }, true);
+}
+initPress($("msgs")); initPress($("dmMsgs"));
+function canDeleteAll(m) { return m.mine || !!m.mod; }
+function openMsgMenu(el) {
+  const m = el._m;
+  if (!m || $("msgMenu").classList.contains("open") || (m.scope.t === "d" && blocksCache[dmOther])) return;
+  menuMsg = m;
+  $("mmPrev").textContent = m.text;
+  $("mmCopy").hidden = !!m.k;
+  $("msgMenu").classList.add("open");
+}
+$("msgMenu").onclick = (e) => { if (e.target.id === "msgMenu") $("msgMenu").classList.remove("open"); };
+$("delSheet").onclick = (e) => { if (e.target.id === "delSheet") $("delSheet").classList.remove("open"); };
+$("mmReply").onclick = () => {
+  const m = menuMsg; $("msgMenu").classList.remove("open"); if (!m || !m.key) return;
+  setReply(m.scope, { key: m.key, rk: m.key, rn: m.name || "", rf: m.uid, rt: m.text.slice(0, 80) });
+};
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); toast("Copied"); return; } catch (e) {}
+  try {
+    const ta = document.createElement("textarea"); ta.value = t; ta.style.cssText = "position:fixed;opacity:0;top:0";
+    document.body.append(ta); ta.select(); const ok = document.execCommand("copy"); ta.remove();
+    toast(ok ? "Copied" : "Couldn't copy");
+  } catch (e) { toast("Couldn't copy"); }
+}
+$("mmCopy").onclick = () => { const m = menuMsg; $("msgMenu").classList.remove("open"); if (m && !m.k) copyText(m.text); };
+$("mmDel").onclick = () => {
+  const m = menuMsg; $("msgMenu").classList.remove("open"); if (!m || !m.key) return;
+  if (pendingKeys.has(m.key)) { toast("Wait until it is sent."); return; }
+  $("delAll").hidden = !canDeleteAll(m);
+  $("delSheet").classList.add("open");
+};
+$("delNo").onclick = () => $("delSheet").classList.remove("open");
+$("delMe").onclick = () => {
+  const m = menuMsg; $("delSheet").classList.remove("open"); if (!m) return;
+  (hiddenSets[m.scope.t + m.scope.id] || (hiddenSets[m.scope.t + m.scope.id] = new Set())).add(m.key);
+  removeMsgEl(m.scope, m.key);
+  set(ref(db, "hidden/" + uid + "/" + m.scope.id + "/" + m.key), true).catch(() => toast("Couldn't save that. It may come back later."));
+};
+function msgNodePath(scope, key) {
+  return scope.t === "r" ? scope.id + "/messages/" + key : "dms/" + scope.id + "/messages/" + key;
+}
+$("delAll").onclick = async () => {
+  const m = menuMsg; $("delSheet").classList.remove("open"); if (!m || !canDeleteAll(m)) return;
+  const scope = m.scope, box = boxOf(scope);
+  const isLast = scope.t === "d" && box.lastElementChild && box.lastElementChild.dataset.key === m.key;
+  const u = {}; u[msgNodePath(scope, m.key)] = null;
+  if (m.k) u[mediaPath(scope, m.key)] = null;
+  let ok = false;
+  try { await update(ref(db), u); ok = true; } catch (e) {}
+  if (!ok && m.k) {                       // the picture/voice may already be gone: remove just the message
+    try { const u2 = {}; u2[msgNodePath(scope, m.key)] = null; await update(ref(db), u2); ok = true; } catch (e) {}
+  }
+  if (!ok) { toast("Couldn't delete. Check your connection."); return; }
+  removeMsgEl(scope, m.key);
+  if (isLast && dmOther) {                // keep the chat list from still showing the deleted words
+    const v = {}; v["inbox/" + uid + "/" + scope.id + "/last"] = "🚫 Message deleted"; v["inbox/" + dmOther + "/" + scope.id + "/last"] = "🚫 Message deleted";
+    update(ref(db), v).catch(() => {});
+  }
+};
+// decorate a freshly built bubble
+function decorateMsg(d, m, key, scope, mine, who, name) {
+  d._m = { key, scope, mine, uid: who, name, text: m.text, k: m.k };
+}
 
 // ---------- Photos and voice messages ----------
 // The chat message itself stays tiny ("📷 Photo" + size info). The picture / sound is saved
@@ -1626,11 +1879,13 @@ function openImgView(src) {
   history.pushState({ img: true }, "");
 }
 function closeMediaOverlays(fromPop) {
-  const vw = $("imgView"), pv = $("imgPrev");
-  const el = vw.classList.contains("open") ? vw : pv.classList.contains("open") ? pv : null;
+  const vw = $("imgView"), pv = $("imgPrev"), yv = $("ytView");
+  const el = yv.classList.contains("open") ? yv : vw.classList.contains("open") ? vw : pv.classList.contains("open") ? pv : null;
   if (!el) return false;
   el.classList.remove("open");
-  if (el === vw) $("imgViewImg").removeAttribute("src"); else { pendingPhoto = null; $("imgPrevImg").removeAttribute("src"); }
+  if (el === vw) $("imgViewImg").removeAttribute("src");
+  else if (el === yv) $("ytFrame").src = "about:blank";
+  else { pendingPhoto = null; $("imgPrevImg").removeAttribute("src"); }
   if (!fromPop && !CapApp) { ignorePops++; history.back(); }
   return true;
 }
@@ -1699,7 +1954,7 @@ async function sendMedia(scope, kind, data, meta) {
   cachePut(mcKey(scope, key), data);
   pendingKeys.add(key);
   playSendSound();
-  const extra = kind === "i" ? { k: "i", w: meta.w, h: meta.h } : { k: "a", d: meta.d };
+  const extra = Object.assign(kind === "i" ? { k: "i", w: meta.w, h: meta.h } : { k: "a", d: meta.d }, takeReply(scope));
   const more = {};
   more[mediaPath(scope, key)] = { uid, d: data, ts: serverTimestamp() };
   more["mediaLast/" + uid + "/ts"] = serverTimestamp();
@@ -2849,7 +3104,7 @@ $("delConfirm").onclick = async () => {
     await remove(ref(db, "inbox/" + me));   // your chat list (the other person keeps their messages)
     await remove(ref(db, "blocks/" + me));
     await remove(ref(db, "profiles/" + me));
-    for (const n of ["stories", "storyViews", "storyHide", "storyIndex"]) { try { await remove(ref(db, n + "/" + me)); } catch (e) {} }
+    for (const n of ["stories", "storyViews", "storyHide", "storyIndex", "hidden"]) { try { await remove(ref(db, n + "/" + me)); } catch (e) {} }
     try { await onDisconnect(ref(db, "presence/" + me)).cancel(); } catch (e) {}
     await remove(ref(db, "presence/" + me));
     await remove(ref(db, "names/" + key));
