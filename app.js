@@ -786,9 +786,11 @@ async function leaveChat(fromPop) {
 const CapApp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
 function goBack() {
   if ($("menuShade").classList.contains("open")) { closeMenu(); return; }
-  for (const id of ["confirmSheet", "clearSheet", "userSheet", "sheet"]) {
-    if ($(id).classList.contains("open")) { $(id).classList.remove("open"); return; }
+  for (const id of ["confirmSheet", "clearSheet", "userSheet", "sheet", "stViewers"]) {
+    if ($(id).classList.contains("open")) { $(id).classList.remove("open"); pauseSt(false); return; }
   }
+  if (sv) { closeStoryView(); return; }
+  if (snOpen) { closeStoryNew(); return; }
   if (profileOpen) { closeProfile(); return; }
   if (blockedOpen) { closeBlocked(); return; }
   if (settingsOpen) { closeSettings(); return; }
@@ -803,6 +805,9 @@ $("backBtn").onclick = () => {
   if (CapApp) leaveChat(); else history.back();
 };
 window.addEventListener("popstate", () => {
+  if ($("stViewers").classList.contains("open")) { $("stViewers").classList.remove("open"); pauseSt(false); return; }
+  if (sv) { closeStoryView(true); return; }
+  if (snOpen) { closeStoryNew(true); return; }
   if (profileOpen) { closeProfile(); return; }
   if (blockedOpen) { closeBlocked(); return; }
   if (settingsOpen) { closeSettings(); return; }
@@ -1243,11 +1248,15 @@ function setTab(t) {
   lobbyTab = t;
   $("tabRooms").classList.toggle("on", t === "rooms");
   $("tabChats").classList.toggle("on", t === "chats");
+  $("tabStories").classList.toggle("on", t === "stories");
   $("roomsPane").hidden = t !== "rooms";
   $("chatsPane").hidden = t !== "chats";
+  $("storiesPane").hidden = t !== "stories";
+  if (t === "stories") loadStories(false);          // stories are fetched only when this tab opens
 }
 $("tabRooms").onclick = () => setTab("rooms");
 $("tabChats").onclick = () => setTab("chats");
+$("tabStories").onclick = () => setTab("stories");
 
 const unreadOf = (e) => Math.max(0, (Number(e.n) || 0) - (Number(e.seen) || 0));
 const dmVisible = (e) => e && e.with && e.ts && e.ts > (Number(e.clearedAt) || 0) && !blocksCache[e.with];
@@ -1287,6 +1296,7 @@ function stopPrivateListeners() {
   inboxCache = {}; blocksCache = {}; inboxReady = false;
   stopRoomNotifs();
   Object.keys(msgCache).forEach((k) => delete msgCache[k]); Object.keys(memCache).forEach((k) => delete memCache[k]);
+  stLoadedAt = 0; stUsers = []; stMine = []; Object.keys(stCache).forEach((k) => delete stCache[k]);
   dmOpen = false; blockedOpen = false; dmOther = null; dmConvId = null;
   $("dmBadge").hidden = true;
   $("dmList").innerHTML = "";
@@ -1464,19 +1474,9 @@ function updateDmComposer() {
   $("dmBlockedText").textContent = "You blocked " + (dmName || "this user") + ". Unblock to send messages.";
 }
 
-$("dmForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const text = $("dmInput").value.trim();
-  if (!text || !dmOther) return;
-  if (blocksCache[dmOther]) { toast("Unblock this user to send messages."); return; }
-  $("dmInput").value = ""; autosize($("dmInput"));
-  clearMyTyping(dmConvId);
-  playSendSound();
-  const conv = dmConvId, other = dmOther;
-  const key = push(ref(db, "dms/" + conv + "/messages")).key;
-  pendingKeys.add(key);
-  let ok = false;
-  for (let attempt = 0; attempt < 2 && !ok; attempt++) {
+// One private message, written together with both chat-list entries (also used for story replies).
+async function dmWrite(conv, other, key, text) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
       // My own sent-counter lives in my chat-list entry; the rules require it to go up by exactly 1.
       let base;
@@ -1491,9 +1491,23 @@ $("dmForm").addEventListener("submit", async (e) => {
       u[mine + "with"] = other; u[mine + "last"] = preview; u[mine + "from"] = uid; u[mine + "ts"] = ts; u[mine + "sent"] = n;
       u[theirs + "with"] = uid; u[theirs + "last"] = preview; u[theirs + "from"] = uid; u[theirs + "ts"] = ts; u[theirs + "n"] = n;
       await update(ref(db), u);
-      ok = true;
+      return true;
     } catch (err) {}
   }
+  return false;
+}
+$("dmForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("dmInput").value.trim();
+  if (!text || !dmOther) return;
+  if (blocksCache[dmOther]) { toast("Unblock this user to send messages."); return; }
+  $("dmInput").value = ""; autosize($("dmInput"));
+  clearMyTyping(dmConvId);
+  playSendSound();
+  const conv = dmConvId, other = dmOther;
+  const key = push(ref(db, "dms/" + conv + "/messages")).key;
+  pendingKeys.add(key);
+  const ok = await dmWrite(conv, other, key, text);
   pendingKeys.delete(key);
   if (ok) {
     const t = document.querySelector('#dmMsgs .msg[data-key="' + key + '"] .tick');
@@ -1826,6 +1840,532 @@ function stopRoomNotifs() {
 }
 renderNotifUI();
 
+// ---------- Stories ----------
+// Nothing here runs until you open the Stories tab, and there are no live listeners.
+//   storyIndex/<uid>        = { exp, ts, s: { <id>: "a:<time>" } }   a small list of who has stories (a=everyone f=friends h=hide-list)
+//   stories/<uid>/<id>      = { k:'t'|'p'|'v', tx|cap, col, bg, m (picture/video), d, aud, ts, exp }
+//   storyViews/<uid>/<id>/<viewer> = time        (only the owner can read this list)
+//   storyHide/<uid>/<victim> = true               (people hidden from your "Hide from…" stories)
+// A story is unreadable after 24 h (enforced by the database rules). The leftover data is deleted
+// by whoever opens the Stories tab next (there is no server to do it for us on the free plan).
+const ST_LIFE = 86400000, ST_VISIBLE = ST_LIFE - 120000, ST_MAX_MINE = 10;
+const ST_BG = ["linear-gradient(135deg,#ff7a00,#ff2d55)", "linear-gradient(135deg,#4facfe,#00f2fe)", "linear-gradient(135deg,#43e97b,#38f9d7)", "linear-gradient(135deg,#a18cd1,#fbc2eb)", "linear-gradient(135deg,#f6d365,#fda085)", "linear-gradient(135deg,#232526,#414345)", "linear-gradient(135deg,#0f2027,#2c5364)", "linear-gradient(135deg,#f093fb,#f5576c)", "linear-gradient(135deg,#667eea,#764ba2)", "linear-gradient(135deg,#11998e,#38ef7d)"];
+const ST_COL = ["#ffffff", "#ffd60a", "#ff7a00", "#ff4d6d", "#4dd2ff", "#3ddc84", "#c77dff", "#111111"];
+const ST_EMO = ["😀", "😂", "😍", "🔥", "👍", "🎉", "❤️", "😎"];
+const srvNow = () => Date.now() + (srvOffset || 0);
+let seenSt = {};
+try { seenSt = JSON.parse(localStorage.getItem("bukchat-st-seen") || "{}") || {}; } catch (e) {}
+function markSeen(sid) {
+  if (seenSt[sid]) return;
+  seenSt[sid] = 1;
+  const k = Object.keys(seenSt);
+  if (k.length > 300) k.slice(0, k.length - 300).forEach((x) => delete seenSt[x]);
+  try { localStorage.setItem("bukchat-st-seen", JSON.stringify(seenSt)); } catch (e) {}
+}
+const stAgo = (ts) => {
+  const m = Math.max(0, Math.round((srvNow() - ts) / 60000));
+  return m < 1 ? "just now" : m < 60 ? m + " min ago" : Math.round(m / 60) + " h ago";
+};
+const stEntries = (v) => Object.entries((v && v.s) || {}).map(([sid, val]) => ({ sid, aud: String(val)[0], ts: Number(String(val).slice(2)) || 0 }));
+const isFriend = (u) => Object.values(inboxCache).some((e) => e && e.with === u);
+
+let stUsers = [], stMine = [], stLoadedAt = 0, stBusy = false;
+const stCache = {};
+async function loadStories(force) {
+  if (!uid) return;
+  if (!force && stLoadedAt && Date.now() - stLoadedAt < 60000) { renderStories(); return; }
+  if (stBusy) return;
+  stBusy = true;
+  $("stRefresh").disabled = true;
+  if (!stLoadedAt) { $("stLoading").hidden = false; $("stEmpty").hidden = true; }
+  try {
+    if (!srvOffset) { try { srvOffset = Number((await get(ref(db, ".info/serverTimeOffset"))).val()) || 0; } catch (e) {} }
+    const [mine, feed] = await Promise.all([
+      get(ref(db, "storyIndex/" + uid)),
+      get(query(ref(db, "storyIndex"), orderByChild("ts"), limitToLast(40)))
+    ]);
+    const now = srvNow(), users = [], dead = [];
+    const all = feed.exists() ? Object.entries(feed.val()) : [];
+    if (mine.exists() && !all.some(([u]) => u === uid)) all.push([uid, mine.val()]);
+    all.forEach(([u, v]) => {
+      const list = stEntries(v);
+      list.filter((e) => now - e.ts >= ST_LIFE).forEach((e) => dead.push([u, e.sid, list.length]));
+      const live = list.filter((e) => now - e.ts < ST_VISIBLE).sort((a, b) => a.ts - b.ts);
+      if (u === uid) { stMine = live; return; }
+      if (blocksCache[u]) return;
+      const shown = live.filter((e) => e.aud !== "f" || isFriend(u));   // "friends only" is for people you've chatted with
+      if (shown.length) users.push({ uid: u, list: shown, last: shown[shown.length - 1].ts });
+    });
+    if (!all.some(([u]) => u === uid)) stMine = [];
+    stUsers = users.sort((a, b) => b.last - a.last);
+    stLoadedAt = Date.now();
+    cleanupStories(all, dead, now);
+  } catch (e) {
+    toast("Couldn't load stories. Check your connection.");
+  }
+  stBusy = false;
+  $("stRefresh").disabled = false;
+  $("stLoading").hidden = true;
+  renderStories();
+}
+// Delete stories older than 24 h (at most a few each time, so opening the tab stays quick).
+async function cleanupStories(all, dead, now) {
+  const byUser = {};
+  dead.forEach(([u, sid]) => { (byUser[u] = byUser[u] || []).push(sid); });
+  let n = 0;
+  for (const [u, sids] of Object.entries(byUser)) {
+    if (n++ >= 5) break;
+    const v = (all.find((x) => x[0] === u) || [])[1];
+    const everyoneDead = stEntries(v).every((e) => now - e.ts >= ST_LIFE);
+    for (const sid of sids) {
+      for (const path of ["stories/" + u + "/" + sid, "storyViews/" + u + "/" + sid]) { try { await remove(ref(db, path)); } catch (e) {} }
+      if (!everyoneDead) { try { await remove(ref(db, "storyIndex/" + u + "/s/" + sid)); } catch (e) {} }
+    }
+    if (everyoneDead) { try { await remove(ref(db, "storyIndex/" + u)); } catch (e) {} }
+  }
+}
+function stRow(u, name, list, mine) {
+  const b = document.createElement("button");
+  b.className = "stItem"; b.type = "button";
+  const ring = document.createElement("div");
+  ring.className = "ring" + (list.every((e) => seenSt[e.sid]) ? " seen" : "");
+  const av = document.createElement("div"); av.className = "av"; av.textContent = (name[0] || "?").toUpperCase();
+  paintAv(av, u, name);
+  ring.append(av);
+  const mid = document.createElement("div");
+  const nm = document.createElement("div"); nm.className = "nm"; nm.textContent = mine ? "My story" : name;
+  const sb = document.createElement("div"); sb.className = "sb";
+  sb.textContent = list.length + (list.length === 1 ? " story · " : " stories · ") + stAgo(list[list.length - 1].ts);
+  mid.append(nm, sb);
+  b.append(ring, mid);
+  b.onclick = () => openStoryView(u, name, list);
+  return b;
+}
+function renderStories() {
+  const mineBox = $("stMine"), list = $("stList");
+  mineBox.innerHTML = ""; list.innerHTML = "";
+  if (stMine.length) mineBox.append(stRow(uid, myName || "Me", stMine, true));
+  stUsers.forEach((x) => {
+    const row = stRow(x.uid, nameCache[x.uid] || "…", x.list, false);
+    list.append(row);
+    getName(x.uid).then((n) => { row.querySelector(".nm").textContent = n || "User"; row.querySelector(".av").dataset.pn = n || ""; paintAv(row.querySelector(".av"), x.uid, n); row.onclick = () => openStoryView(x.uid, n || "User", x.list); });
+  });
+  $("stEmpty").hidden = stUsers.length > 0 || stMine.length > 0 || stBusy;
+}
+$("stRefresh").onclick = () => loadStories(true);
+
+// ----- drawing one story (used by the viewer and the preview) -----
+function drawFrame(el, st) {
+  el.innerHTML = "";
+  if (st.k === "t") {
+    el.style.background = ST_BG[st.bg || 0] || ST_BG[0];
+    const t = document.createElement("div"); t.className = "stText";
+    t.textContent = st.tx || ""; t.style.color = st.col || "#fff";
+    el.append(t);
+  } else if (st.m) {
+    el.style.background = "#000";
+    const m = document.createElement(st.k === "v" ? "video" : "img");
+    if (st.k === "v") { m.muted = true; m.autoplay = true; m.loop = true; m.playsInline = true; m.setAttribute("playsinline", ""); }
+    m.src = st.m; el.append(m);
+    if (st.k === "v") m.play().catch(() => {});
+    if (st.cap) { const c = document.createElement("div"); c.className = "stCap"; c.textContent = st.cap; c.style.color = st.col || "#fff"; el.append(c); }
+  }
+}
+
+// ----- full-screen viewer -----
+let sv = null, svReturn = "lobby";
+function fetchStory(u, sid) {
+  const k = u + "/" + sid;
+  if (!(k in stCache)) {
+    stCache[k] = get(ref(db, "stories/" + u + "/" + sid)).then((s) => (s.exists() ? s.val() : null)).catch(() => null);
+    const keys = Object.keys(stCache);
+    if (keys.length > 6) delete stCache[keys[0]];            // keep memory small (pictures are big)
+  }
+  return stCache[k];
+}
+function openStoryView(u, name, list) {
+  if (sv || !list.length) return;
+  const mine = u === uid;
+  sv = { uid: u, name, list: list.slice(), i: 0, token: 0, timer: null, mine, dur: 0, t0: 0, left: 0, paused: false };
+  const firstNew = sv.list.findIndex((e) => !seenSt[e.sid]);
+  sv.i = !mine && firstNew > 0 ? firstNew : 0;
+  svReturn = document.querySelector(".screen.active") ? document.querySelector(".screen.active").id : "lobby";
+  history.pushState({ story: true }, "");
+  $("svName").textContent = mine ? "My story" : name;
+  $("svAv").textContent = (name[0] || "?").toUpperCase(); $("svAv").dataset.pn = name; paintAv($("svAv"), u, name);
+  $("svDel").hidden = !mine; $("svViews").hidden = !mine; $("svReplyForm").hidden = mine || !!blocksCache[u];
+  $("svReplyInput").value = "";
+  const bars = $("svBars"); bars.innerHTML = "";
+  sv.list.forEach(() => { const i = document.createElement("i"); i.append(document.createElement("b")); bars.append(i); });
+  show("storyView");
+  showStory();
+}
+async function showStory() {
+  if (!sv) return;
+  clearTimeout(sv.timer);
+  const my = ++sv.token, e = sv.list[sv.i];
+  [...$("svBars").children].forEach((bar, j) => {
+    bar.classList.toggle("done", j < sv.i);
+    const b = bar.firstChild; b.style.transition = "none"; b.style.width = j < sv.i ? "100%" : "0";
+  });
+  $("svTime").textContent = stAgo(e.ts);
+  $("svFrame").innerHTML = ""; $("svFrame").style.background = "#000";
+  const st = await fetchStory(sv.uid, e.sid);
+  if (!sv || my !== sv.token) return;
+  if (!st || (st.exp && st.exp < srvNow())) {              // gone, expired or not allowed for me
+    sv.list.splice(sv.i, 1);
+    if ($("svBars").lastChild) $("svBars").removeChild($("svBars").lastChild);
+    if (!sv.list.length) { closeStoryView(); toast("That story isn't available any more."); return; }
+    if (sv.i >= sv.list.length) { closeStoryView(); return; }
+    showStory(); return;
+  }
+  drawFrame($("svFrame"), st);
+  markSeen(e.sid);
+  sv.dur = st.k === "v" ? Math.max(2, Math.min(9, Number(st.d) || 8)) * 1000 : 5000;
+  startBar(sv.dur);
+  const nx = sv.list[sv.i + 1]; if (nx) fetchStory(sv.uid, nx.sid);      // get the next one ready
+  if (sv.mine) loadViewCount(e.sid, my);
+  else if (!seenViewed[e.sid]) { seenViewed[e.sid] = 1; set(ref(db, "storyViews/" + sv.uid + "/" + e.sid + "/" + uid), serverTimestamp()).catch(() => {}); }
+}
+const seenViewed = {};
+function startBar(ms, from) {
+  const bar = $("svBars").children[sv.i].firstChild;
+  bar.style.transition = "none"; bar.style.width = (from || 0) * 100 + "%";
+  void bar.offsetWidth;
+  bar.style.transition = "width " + ms + "ms linear"; bar.style.width = "100%";
+  sv.t0 = Date.now(); sv.left = ms; sv.paused = false;
+  clearTimeout(sv.timer);
+  sv.timer = setTimeout(stNext, ms);
+  const v = $("svFrame").querySelector("video"); if (v) v.play().catch(() => {});
+}
+function pauseSt(on) {
+  if (!sv) return;
+  if (on && !sv.paused) {
+    sv.paused = true; clearTimeout(sv.timer);
+    sv.left = Math.max(300, sv.left - (Date.now() - sv.t0));
+    const bar = $("svBars").children[sv.i] && $("svBars").children[sv.i].firstChild;
+    if (bar) { const w = bar.getBoundingClientRect().width / bar.parentElement.getBoundingClientRect().width; bar.style.transition = "none"; bar.style.width = w * 100 + "%"; }
+    const v = $("svFrame").querySelector("video"); if (v) v.pause();
+  } else if (!on && sv.paused) {
+    const bar = $("svBars").children[sv.i].firstChild;
+    const done = parseFloat(bar.style.width) / 100 || 0;
+    startBar(sv.left, done);
+  }
+}
+function stNext() { if (!sv) return; if (sv.i < sv.list.length - 1) { sv.i++; showStory(); } else closeStoryView(); }
+function stPrev() { if (!sv) return; if (sv.i > 0) sv.i--; showStory(); }
+function closeStoryView(fromPop) {
+  if (!sv) return;
+  clearTimeout(sv.timer); sv = null;
+  $("svFrame").innerHTML = ""; $("stViewers").classList.remove("open");
+  show(svReturn === "storyView" ? "lobby" : svReturn);
+  renderStories();
+}
+$("svNext").onclick = stNext; $("svPrev").onclick = stPrev;
+$("svClose").onclick = () => { if (CapApp) closeStoryView(); else history.back(); };
+(() => {                                                    // swipe down to close
+  let y0 = 0;
+  const st = $("storyView");
+  st.addEventListener("touchstart", (e) => { y0 = e.touches[0].clientY; }, { passive: true });
+  st.addEventListener("touchend", (e) => { if (e.changedTouches[0].clientY - y0 > 110 && sv) $("svClose").click(); }, { passive: true });
+})();
+$("svReplyInput").addEventListener("focus", () => pauseSt(true));
+$("svReplyInput").addEventListener("blur", () => setTimeout(() => { if (sv && !$("svReplyInput").value.trim()) pauseSt(false); }, 150));
+$("svReplyForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("svReplyInput").value.trim();
+  if (!text || !sv || sv.mine) return;
+  if (blocksCache[sv.uid]) { toast("Unblock this user to reply."); return; }
+  const other = sv.uid, conv = dmConv(uid, other);
+  $("svReplyInput").value = ""; $("svReplyInput").blur();
+  playSendSound();
+  // Replies go into the normal private chat, so the usual DM rules apply.
+  if (!inboxCache[conv]) {
+    const a = uid < other ? uid : other, b = uid < other ? other : uid;
+    try { await set(ref(db, "dms/" + conv + "/meta"), { a, b }); } catch (err) {}
+  }
+  const ok = await dmWrite(conv, other, push(ref(db, "dms/" + conv + "/messages")).key, ("↩ Story reply: " + text).slice(0, 500));
+  toast(ok ? "Reply sent to " + sv.name + " 💬" : "Couldn't send the reply.");
+  if (sv) pauseSt(false);
+});
+async function loadViewCount(sid, my) {
+  $("svViewN").textContent = "…";
+  try {
+    const sn = await get(ref(db, "storyViews/" + uid + "/" + sid));
+    if (sv && my === sv.token) { sv.views = sn.exists() ? sn.val() : {}; $("svViewN").textContent = Object.keys(sv.views).length; }
+  } catch (e) { if (sv && my === sv.token) $("svViewN").textContent = "0"; }
+}
+$("svViews").onclick = () => {
+  if (!sv || !sv.mine) return;
+  pauseSt(true);
+  const ul = $("stViewList"); ul.innerHTML = "";
+  const rows = Object.entries(sv.views || {}).sort((a, b) => b[1] - a[1]);
+  $("stViewEmpty").hidden = rows.length > 0;
+  rows.forEach(([u, ts]) => {
+    const li = document.createElement("li");
+    const av = document.createElement("div"); av.className = "av"; av.textContent = "?";
+    const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = "…";
+    const tm = document.createElement("small"); tm.textContent = stAgo(Number(ts) || srvNow());
+    li.append(av, nm, tm); ul.append(li);
+    getName(u).then((n) => { nm.textContent = n || "User"; av.textContent = ((n || "?")[0]).toUpperCase(); paintAv(av, u, n); });
+  });
+  $("stViewers").classList.add("open");
+};
+$("stViewers").onclick = (e) => { if (e.target.id === "stViewers") { $("stViewers").classList.remove("open"); pauseSt(false); } };
+$("svDel").onclick = () => {
+  if (!sv || !sv.mine) return;
+  pauseSt(true);
+  const e = sv.list[sv.i], sid = e.sid;
+  askConfirm("Delete this story?", "It will disappear for everyone right away.", "Delete", async () => {
+    const left = stMine.filter((x) => x.sid !== sid);
+    const u = {};
+    u["stories/" + uid + "/" + sid] = null; u["storyViews/" + uid + "/" + sid] = null;
+    if (left.length) u["storyIndex/" + uid + "/s/" + sid] = null; else u["storyIndex/" + uid] = null;
+    try { await update(ref(db), u); } catch (err) { toast("Couldn't delete. Check your connection."); return; }
+    delete stCache[uid + "/" + sid];
+    stMine = left; stLoadedAt = 0;
+    if (!sv) return;
+    sv.list.splice(sv.i, 1);
+    const bars = $("svBars"); bars.removeChild(bars.lastChild);
+    toast("Story deleted");
+    if (!sv.list.length) { closeStoryView(); return; }
+    if (sv.i >= sv.list.length) sv.i = sv.list.length - 1;
+    showStory();
+  });
+  const stop = () => { if ($("clearSheet").classList.contains("open")) setTimeout(stop, 300); else pauseSt(false); };
+  setTimeout(stop, 300);
+};
+
+// ----- making a story -----
+let sn = null, snOpen = false;
+function snResetState() { sn = { k: null, m: null, d: 0, bg: 0, col: "#ffffff", aud: "a", hide: new Set(), hideLoaded: false, busy: false }; }
+async function openStoryNew() {
+  if (stMine.length >= ST_MAX_MINE) { toast("You can have up to " + ST_MAX_MINE + " stories at a time. Delete one first."); return; }
+  snResetState();
+  snOpen = true;
+  history.pushState({ snew: true }, "");
+  document.querySelectorAll(".snKinds button").forEach((b) => b.classList.remove("on"));
+  document.querySelectorAll("#snAud button").forEach((b) => b.classList.toggle("on", b.dataset.a === "a"));
+  $("snTx").value = ""; $("snCap").value = "";
+  $("snTx").hidden = $("snCap").hidden = $("snTools").hidden = $("snHideBox").hidden = true;
+  $("snNote").textContent = ""; $("snPost").disabled = true;
+  $("snAudNote").textContent = "Everyone on BUKCHAT can see it.";
+  $("snFrame").innerHTML = '<div class="stHint">Choose Photo, Video or Text above</div>'; $("snFrame").style.background = "#000";
+  show("storyNew");
+}
+function closeStoryNew(fromPop) {
+  if (!snOpen) return;
+  snOpen = false; sn = null;
+  show("lobby");
+}
+$("stAddBtn").onclick = openStoryNew;
+$("snBack").onclick = () => { if (CapApp) closeStoryNew(); else history.back(); };
+
+function buildTools() {
+  const emo = $("snEmo"), cols = $("snCols"), bgs = $("snBgs");
+  if (emo.childElementCount) return;
+  ST_EMO.forEach((e) => { const b = document.createElement("button"); b.type = "button"; b.textContent = e; b.onclick = () => insertEmoji(e); emo.append(b); });
+  ST_COL.forEach((c) => { const b = document.createElement("button"); b.type = "button"; b.style.background = c; b.setAttribute("aria-label", "Text colour"); b.dataset.c = c; if (c === "#ffffff") b.classList.add("on"); b.onclick = () => { sn.col = c; cols.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); snPreview(); }; cols.append(b); });
+  bgs.classList.add("bgs");
+  ST_BG.forEach((g, i) => { const b = document.createElement("button"); b.type = "button"; b.style.background = g; b.setAttribute("aria-label", "Background"); if (i === 0) b.classList.add("on"); b.onclick = () => { sn.bg = i; bgs.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); snPreview(); }; bgs.append(b); });
+}
+function insertEmoji(e) {
+  const f = sn && sn.k === "t" ? $("snTx") : $("snCap");
+  const a = f.selectionStart == null ? f.value.length : f.selectionStart, z = f.selectionEnd == null ? a : f.selectionEnd;
+  if ((f.value.slice(0, a) + e + f.value.slice(z)).length > f.maxLength) return;
+  f.value = f.value.slice(0, a) + e + f.value.slice(z);
+  f.setSelectionRange(a + e.length, a + e.length);
+  snPreview();
+}
+function snStory() {
+  return { k: sn.k, tx: $("snTx").value.trim(), cap: $("snCap").value.trim(), col: sn.col, bg: sn.bg, m: sn.m };
+}
+function snPreview() {
+  if (!sn || !sn.k) return;
+  const st = snStory();
+  if (st.k === "t") drawFrame($("snFrame"), st);
+  else if (sn.m) {
+    // update only the caption so the video doesn't restart on every keystroke
+    const fr = $("snFrame");
+    if (!fr.querySelector("img,video")) drawFrame(fr, st);
+    let c = fr.querySelector(".stCap");
+    if (st.cap) { if (!c) { c = document.createElement("div"); c.className = "stCap"; fr.append(c); } c.textContent = st.cap; c.style.color = st.col; } else if (c) c.remove();
+  }
+  $("snPost").disabled = sn.busy || (st.k === "t" ? !st.tx : !sn.m);
+}
+document.querySelectorAll(".snKinds button").forEach((b) => b.onclick = () => {
+  if (!sn || sn.busy) return;
+  buildTools();
+  const k = b.dataset.k;
+  document.querySelectorAll(".snKinds button").forEach((x) => x.classList.toggle("on", x === b));
+  sn.k = k; sn.m = null; sn.d = 0;
+  $("snTools").hidden = false;
+  $("snTx").hidden = k !== "t"; $("snCap").hidden = k === "t"; $("snBgs").hidden = k !== "t";
+  $("snNote").textContent = "";
+  $("snFrame").innerHTML = '<div class="stHint">' + (k === "t" ? "Type your story below" : "Pick a " + (k === "p" ? "photo" : "video") + "…") + "</div>";
+  $("snFrame").style.background = "#000";
+  if (k === "t") { snPreview(); $("snTx").focus(); }
+  else { $("snFile").accept = k === "p" ? "image/*" : "video/*"; $("snFile").click(); $("snPost").disabled = true; }
+});
+$("snTx").addEventListener("input", snPreview);
+$("snCap").addEventListener("input", snPreview);
+$("snFile").onchange = async () => {
+  const f = $("snFile").files && $("snFile").files[0];
+  $("snFile").value = "";
+  if (!f || !sn) return;
+  const k = sn.k;
+  sn.busy = true; $("snPost").disabled = true;
+  try {
+    if (k === "p") {
+      if (!/^image\//.test(f.type)) throw new Error("type");
+      $("snNote").textContent = "Preparing photo…";
+      sn.m = await shrinkStoryPhoto(f);
+    } else {
+      if (!/^video\//.test(f.type)) throw new Error("type");
+      const r = await prepStoryVideo(f, (pct) => { $("snNote").textContent = "Preparing video… " + pct + "%"; });
+      sn.m = r.data; sn.d = r.d;
+    }
+    $("snNote").textContent = k === "v" ? "Video ready (" + Math.round(sn.d) + " s, no sound)" : "";
+    $("snFrame").innerHTML = "";
+    drawFrame($("snFrame"), snStory());
+  } catch (e) {
+    sn.m = null;
+    $("snNote").textContent = e && e.message === "long" ? "That video is too big even after shrinking. Try a shorter one." : "Couldn't use that file. Try another one.";
+  }
+  if (sn) { sn.busy = false; snPreview(); }
+};
+// Photos: shrink to at most 720 px and ~70% quality (usually 40-90 KB).
+function shrinkStoryPhoto(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file), im = new Image();
+    im.onload = () => {
+      try {
+        let scale = Math.min(1, 720 / Math.max(im.naturalWidth, im.naturalHeight)), q = 0.72, out = "";
+        for (let i = 0; i < 6; i++) {
+          const cv = document.createElement("canvas");
+          cv.width = Math.max(1, Math.round(im.naturalWidth * scale)); cv.height = Math.max(1, Math.round(im.naturalHeight * scale));
+          const cx = cv.getContext("2d"); cx.fillStyle = "#000"; cx.fillRect(0, 0, cv.width, cv.height); cx.drawImage(im, 0, 0, cv.width, cv.height);
+          out = cv.toDataURL("image/jpeg", q);
+          if (out.length < 150000) break;
+          q = Math.max(0.45, q - 0.1); scale *= 0.85;
+        }
+        URL.revokeObjectURL(url);
+        out.startsWith("data:image/jpeg") && out.length < 210000 ? resolve(out) : reject(new Error("big"));
+      } catch (e) { reject(e); }
+    };
+    im.onerror = () => { URL.revokeObjectURL(url); reject(new Error("load")); };
+    im.src = url;
+  });
+}
+// Videos: at most 8 seconds, 480 px, about 300 kbps, no sound (plays back once through a small encoder).
+function prepStoryVideo(file, onPct) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file), v = document.createElement("video");
+    v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = url;
+    const fail = (m) => { URL.revokeObjectURL(url); reject(new Error(m)); };
+    v.onerror = () => fail("load");
+    v.onloadedmetadata = async () => {
+      try {
+        if (!v.videoWidth || !MediaRecorder) return fail("load");
+        const dur = Math.min(8, isFinite(v.duration) ? v.duration : 8);
+        const sc = Math.min(1, 480 / Math.max(v.videoWidth, v.videoHeight));
+        const cv = document.createElement("canvas");
+        cv.width = Math.max(2, Math.round(v.videoWidth * sc / 2) * 2); cv.height = Math.max(2, Math.round(v.videoHeight * sc / 2) * 2);
+        const cx = cv.getContext("2d");
+        const mime = ["video/webm;codecs=vp8", "video/webm"].find((t) => MediaRecorder.isTypeSupported(t));
+        if (!mime) return fail("load");
+        const rec = new MediaRecorder(cv.captureStream(24), { mimeType: mime, videoBitsPerSecond: 300000 });
+        const parts = [];
+        rec.ondataavailable = (e) => { if (e.data && e.data.size) parts.push(e.data); };
+        rec.onstop = () => {
+          const blob = new Blob(parts, { type: "video/webm" });
+          URL.revokeObjectURL(url);
+          if (blob.size > 480000) return reject(new Error("long"));
+          const fr = new FileReader();
+          fr.onload = () => (String(fr.result).startsWith("data:video/webm;base64,") ? resolve({ data: fr.result, d: Math.max(1, dur) }) : reject(new Error("load")));
+          fr.onerror = () => reject(new Error("load"));
+          fr.readAsDataURL(blob);
+        };
+        rec.start(250);
+        v.currentTime = 0;
+        await v.play();
+        const draw = () => {
+          cx.drawImage(v, 0, 0, cv.width, cv.height);
+          onPct(Math.min(99, Math.round(v.currentTime / dur * 100)));
+          if (v.currentTime >= dur || v.ended) { v.pause(); rec.stop(); } else requestAnimationFrame(draw);
+        };
+        draw();
+      } catch (e) { fail("load"); }
+    };
+  });
+}
+// Who can see it
+document.querySelectorAll("#snAud button").forEach((b) => b.onclick = async () => {
+  if (!sn) return;
+  sn.aud = b.dataset.a;
+  document.querySelectorAll("#snAud button").forEach((x) => x.classList.toggle("on", x === b));
+  $("snAudNote").textContent = sn.aud === "a" ? "Everyone on BUKCHAT can see it." : sn.aud === "f" ? "Only people you have chatted with privately can see it." : "Everyone can see it except the people you tick below.";
+  $("snHideBox").hidden = sn.aud !== "h";
+  if (sn.aud === "h") await buildHideList();
+});
+async function buildHideList() {
+  const box = $("snHideBox");
+  if (!sn.hideLoaded) {
+    sn.hideLoaded = true;
+    try { const h = await get(ref(db, "storyHide/" + uid)); if (h.exists() && sn) Object.keys(h.val()).forEach((u) => sn.hide.add(u)); } catch (e) {}
+  }
+  box.innerHTML = "";
+  const people = [...new Set(Object.values(inboxCache).filter((e) => e && e.with).map((e) => e.with))];
+  if (!people.length) { box.innerHTML = '<div class="emptyNote" style="padding:14px">You haven\'t chatted with anyone yet, so there is nobody to hide it from.</div>'; return; }
+  people.forEach((u) => {
+    const row = document.createElement("label"); row.className = "hideRow";
+    const av = document.createElement("div"); av.className = "av"; av.textContent = "?";
+    const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = nameCache[u] || "…";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = sn.hide.has(u);
+    cb.onchange = () => { if (cb.checked) sn.hide.add(u); else sn.hide.delete(u); };
+    row.append(av, nm, cb); box.append(row);
+    getName(u).then((n) => { nm.textContent = n || "User"; av.textContent = ((n || "?")[0]).toUpperCase(); paintAv(av, u, n); });
+  });
+}
+const newStoryId = () => {
+  const a = new Uint8Array(12); (window.crypto || window.msCrypto).getRandomValues(a);
+  return Array.from(a, (x) => "0123456789abcdefghijklmnopqrstuvwxyz"[x % 36]).join("");
+};
+$("snPost").onclick = async () => {
+  if (!sn || sn.busy || !sn.k) return;
+  const st = snStory();
+  if (st.k === "t" ? !st.tx : !sn.m) return;
+  sn.busy = true; $("snPost").disabled = true; $("snNote").textContent = "Posting…";
+  try {
+    if (!srvOffset) { try { srvOffset = Number((await get(ref(db, ".info/serverTimeOffset"))).val()) || 0; } catch (e) {} }
+    const sid = newStoryId(), now = srvNow(), exp = now + ST_LIFE - 120000;
+    const story = { k: st.k, aud: sn.aud, ts: serverTimestamp(), exp };
+    if (st.k === "t") { story.tx = st.tx; story.bg = st.bg; story.col = st.col; }
+    else { story.m = sn.m; if (st.cap) { story.cap = st.cap; story.col = st.col; } if (st.k === "v") story.d = sn.d; }
+    const u = {};
+    u["stories/" + uid + "/" + sid] = story;
+    u["storyIndex/" + uid + "/s/" + sid] = sn.aud + ":" + String(Math.round(now)).padStart(13, "0");
+    u["storyIndex/" + uid + "/exp"] = exp;
+    u["storyIndex/" + uid + "/ts"] = serverTimestamp();
+    if (sn.aud === "h") {
+      const old = new Set();
+      try { const h = await get(ref(db, "storyHide/" + uid)); if (h.exists()) Object.keys(h.val()).forEach((x) => old.add(x)); } catch (e) {}
+      sn.hide.forEach((x) => { if (!old.has(x)) u["storyHide/" + uid + "/" + x] = true; });
+      old.forEach((x) => { if (!sn.hide.has(x)) u["storyHide/" + uid + "/" + x] = null; });
+    }
+    await withTimeout(update(ref(db), u), 20000);
+    stLoadedAt = 0; Object.keys(stCache).forEach((k) => delete stCache[k]);
+    snOpen = false; sn = null;
+    show("lobby");
+    toast("Story posted ✓");
+    loadStories(true);
+  } catch (e) {
+    const wait = String((e && (e.code || e.message)) || "").toUpperCase().includes("PERMISSION");
+    $("snNote").textContent = wait ? "Please wait a few seconds between stories, then try again." : "Couldn't post. Check your connection and try again.";
+    if (sn) { sn.busy = false; $("snPost").disabled = false; }
+  }
+};
+
 // ---------- Online status, last seen and typing ----------
 //   presence/<uid>            {online, last}  written only by its owner; readable by people you have
 //                                              chatted with (and nobody who is blocked)
@@ -2025,6 +2565,7 @@ $("delConfirm").onclick = async () => {
     await remove(ref(db, "inbox/" + me));   // your chat list (the other person keeps their messages)
     await remove(ref(db, "blocks/" + me));
     await remove(ref(db, "profiles/" + me));
+    for (const n of ["stories", "storyViews", "storyHide", "storyIndex"]) { try { await remove(ref(db, n + "/" + me)); } catch (e) {} }
     try { await onDisconnect(ref(db, "presence/" + me)).cancel(); } catch (e) {}
     await remove(ref(db, "presence/" + me));
     await remove(ref(db, "names/" + key));
