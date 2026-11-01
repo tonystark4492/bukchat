@@ -647,6 +647,7 @@ if (window.visualViewport) {
 // Message box: grows with the text (up to ~5 lines). On a phone the keyboard's Enter key adds a
 // new line and the ➤ button sends. With a physical keyboard Enter sends and Shift+Enter adds a line.
 function autosize(t) {
+  if (t.form) t.form.classList.toggle("hasText", !!t.value.trim());   // mic when empty, ➤ when there is text
   const box = $(t.id === "msgInput" ? "msgs" : "dmMsgs");
   const wasAtBottom = stick.get(box);
   t.style.height = "auto";                       // measure at one line,
@@ -684,8 +685,8 @@ function buildMessage(m, key) {
     who.classList.add("tap");
     who.onclick = () => openUserSheet(m.uid, m.name);
   }
-  const body = document.createElement("div");
-  body.textContent = m.text;
+  const body = m.k ? mediaBody(m, key, { t: "r", id: ROOM }, d) : document.createElement("div");
+  if (!m.k) body.textContent = m.text;
   const tm = document.createElement("div");
   tm.className = "tm";
   tm.textContent = m.ts ? fmtTime(m.ts) : "";
@@ -763,6 +764,7 @@ $("sendForm").addEventListener("submit", async (e) => {
 async function leaveChat(fromPop) {
   if (!inRoom) return;
   inRoom = false;
+  cancelRec(); stopAllAudio();
   joinToken++; joining = false;
   msgQueue = [];
   unsubs.forEach((u) => {
@@ -789,6 +791,7 @@ function goBack() {
   for (const id of ["confirmSheet", "clearSheet", "userSheet", "sheet", "stViewers"]) {
     if ($(id).classList.contains("open")) { $(id).classList.remove("open"); pauseSt(false); return; }
   }
+  if (closeMediaOverlays()) return;
   if (sv) { closeStoryView(); return; }
   if (snOpen) { closeStoryNew(); return; }
   if (profileOpen) { closeProfile(); return; }
@@ -805,6 +808,8 @@ $("backBtn").onclick = () => {
   if (CapApp) leaveChat(); else history.back();
 };
 window.addEventListener("popstate", () => {
+  if (ignorePops > 0) { ignorePops--; return; }
+  if (closeMediaOverlays(true)) return;
   if ($("stViewers").classList.contains("open")) { $("stViewers").classList.remove("open"); pauseSt(false); return; }
   if (sv) { closeStoryView(true); return; }
   if (snOpen) { closeStoryNew(true); return; }
@@ -1423,6 +1428,7 @@ async function openDm(other, from) {
 function leaveDm() {
   if (!dmOpen) return;
   dmOpen = false;
+  cancelRec(); stopAllAudio();
   clearMyTyping(dmConvId); stopTypingWatch();
   if (dmOff) { dmOff(); dmOff = null; }
   dmOther = null; dmConvId = null;
@@ -1441,8 +1447,8 @@ function addDmMessage(m, key) {
   const d = document.createElement("div");
   d.className = "msg " + (mine ? "mine" : "other");
   if (key) d.dataset.key = key;
-  const body = document.createElement("div");
-  body.textContent = m.text;
+  const body = m.k ? mediaBody(m, key, { t: "d", id: dmConvId }, d) : document.createElement("div");
+  if (!m.k) body.textContent = m.text;
   const tm = document.createElement("div");
   tm.className = "tm";
   tm.textContent = m.ts ? fmtTime(m.ts) : "";
@@ -1475,7 +1481,7 @@ function updateDmComposer() {
 }
 
 // One private message, written together with both chat-list entries (also used for story replies).
-async function dmWrite(conv, other, key, text) {
+async function dmWrite(conv, other, key, text, extra, more) {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       // My own sent-counter lives in my chat-list entry; the rules require it to go up by exactly 1.
@@ -1487,7 +1493,8 @@ async function dmWrite(conv, other, key, text) {
       const ts = serverTimestamp(), preview = text.slice(0, 80);
       const mine = "inbox/" + uid + "/" + conv + "/", theirs = "inbox/" + other + "/" + conv + "/";
       const u = {};
-      u["dms/" + conv + "/messages/" + key] = { from: uid, text, ts };
+      u["dms/" + conv + "/messages/" + key] = Object.assign({ from: uid, text, ts }, extra || {});
+      if (more) Object.assign(u, more);
       u[mine + "with"] = other; u[mine + "last"] = preview; u[mine + "from"] = uid; u[mine + "ts"] = ts; u[mine + "sent"] = n;
       u[theirs + "with"] = uid; u[theirs + "last"] = preview; u[theirs + "from"] = uid; u[theirs + "ts"] = ts; u[theirs + "n"] = n;
       await update(ref(db), u);
@@ -1520,6 +1527,283 @@ $("dmForm").addEventListener("submit", async (e) => {
     if (dmConvId === conv) { $("dmInput").value = text; autosize($("dmInput")); }
   }
 });
+
+// ---------- Photos and voice messages ----------
+// The chat message itself stays tiny ("📷 Photo" + size info). The picture / sound is saved
+// separately (roomMedia/... or dmMedia/...) and is only downloaded when it is on screen
+// (photos) or when someone taps play (voice). Media is removed after 7 days.
+const MEDIA_LIFE = 7 * 86400000, VOICE_MAX = 45;
+let ignorePops = 0;
+const mediaCache = new Map();               // "r<room>/<key>" -> data URL (newest 24 only)
+function mcKey(scope, key) { return scope.t + scope.id + "/" + key; }
+function cachePut(k, v) {
+  mediaCache.delete(k); mediaCache.set(k, v);
+  while (mediaCache.size > 24) mediaCache.delete(mediaCache.keys().next().value);
+}
+function mediaPath(scope, key) { return (scope.t === "r" ? "roomMedia/" : "dmMedia/") + scope.id + "/" + key; }
+// null = not available, "gone" = expired, otherwise the data URL
+async function fetchMedia(scope, key) {
+  const ck = mcKey(scope, key);
+  if (mediaCache.has(ck)) return mediaCache.get(ck);
+  const v = (await get(ref(db, mediaPath(scope, key)))).val();
+  if (!v || typeof v.d !== "string") return null;
+  if (typeof v.ts === "number" && Date.now() > v.ts + MEDIA_LIFE) {
+    remove(ref(db, mediaPath(scope, key))).catch(() => {});   // old media tidies itself up
+    return "gone";
+  }
+  cachePut(ck, v.d);
+  return v.d;
+}
+const mediaIO = "IntersectionObserver" in window
+  ? new IntersectionObserver((es) => es.forEach((e) => {
+      if (e.isIntersecting) { mediaIO.unobserve(e.target); if (e.target._load) e.target._load(); }
+    }), { rootMargin: "120px" })
+  : null;
+function whenVisible(el, fn) { el._load = fn; if (mediaIO) mediaIO.observe(el); else fn(); }
+function fmtDur(s) { s = Math.max(0, Math.round(s || 0)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
+
+function mediaBody(m, key, scope, bubble) {
+  if (m.k === "i") return imageBody(m, key, scope, bubble);
+  if (m.k === "a") return audioBody(Number(m.d) || 0, () => fetchMedia(scope, key));
+  const d = document.createElement("div"); d.textContent = m.text; return d;
+}
+function imageBody(m, key, scope, bubble) {
+  if (bubble) bubble.classList.add("media");
+  const box = document.createElement("div");
+  box.className = "mImg";
+  const w = Math.min(4000, Math.max(1, Number(m.w) || 4)), h = Math.min(4000, Math.max(1, Number(m.h) || 3));
+  box.style.aspectRatio = w + " / " + h;
+  const note = document.createElement("span"); note.className = "mNote"; note.textContent = "📷 Photo";
+  box.append(note);
+  const load = async () => {
+    let d = null;
+    try { d = await fetchMedia(scope, key); } catch (e) {}
+    if (d === "gone") { note.textContent = "📷 Photo expired"; box.onclick = null; box.style.cursor = "default"; return; }
+    if (!d) { note.textContent = "📷 Couldn't load. Tap to retry"; box.onclick = () => { note.textContent = "📷 Loading…"; load(); }; return; }
+    const im = document.createElement("img"); im.alt = "Photo"; im.src = d; im.decoding = "async";
+    note.remove(); box.append(im);
+    box.onclick = () => openImgView(d);
+  };
+  whenVisible(box, load);
+  return box;
+}
+let playingAudio = null;
+function stopAllAudio() { if (playingAudio) { playingAudio.pause(); playingAudio = null; } }
+function audioBody(dur, getSrc) {
+  const el = document.createElement("div"); el.className = "mAud";
+  const btn = document.createElement("button"); btn.type = "button"; btn.className = "mPlay"; btn.textContent = "▶"; btn.setAttribute("aria-label", "Play voice message");
+  const bar = document.createElement("div"); bar.className = "mBar"; const fill = document.createElement("i"); bar.append(fill);
+  const time = document.createElement("span"); time.className = "mTime"; time.textContent = fmtDur(dur);
+  el.append(btn, bar, time);
+  let au = null, loading = false;
+  btn.onclick = async () => {
+    if (au && !au.paused) { au.pause(); return; }
+    if (!au) {
+      if (loading) return;
+      loading = true; btn.textContent = "…";
+      let src = null;
+      try { src = await getSrc(); } catch (e) {}
+      loading = false;
+      if (!src || src === "gone") { btn.textContent = "▶"; time.textContent = src === "gone" ? "Expired" : "Unavailable"; return; }
+      au = new Audio(src); au.preload = "auto";
+      au.onplay = () => { if (playingAudio && playingAudio !== au) playingAudio.pause(); playingAudio = au; btn.textContent = "⏸"; };
+      au.onpause = () => { btn.textContent = "▶"; if (playingAudio === au) playingAudio = null; };
+      au.onended = () => { btn.textContent = "▶"; fill.style.width = "0"; time.textContent = fmtDur(dur); if (playingAudio === au) playingAudio = null; };
+      au.ontimeupdate = () => {
+        const total = dur || (isFinite(au.duration) ? au.duration : 0);
+        if (total) fill.style.width = Math.min(100, au.currentTime / total * 100) + "%";
+        time.textContent = fmtDur(au.currentTime);
+      };
+    }
+    try { await au.play(); } catch (e) { btn.textContent = "▶"; toast("Can't play this voice message on this device."); }
+  };
+  return el;
+}
+
+// ---- Full-screen photo + preview before sending ----
+function openImgView(src) {
+  $("imgViewImg").src = src; $("imgView").classList.add("open");
+  history.pushState({ img: true }, "");
+}
+function closeMediaOverlays(fromPop) {
+  const vw = $("imgView"), pv = $("imgPrev");
+  const el = vw.classList.contains("open") ? vw : pv.classList.contains("open") ? pv : null;
+  if (!el) return false;
+  el.classList.remove("open");
+  if (el === vw) $("imgViewImg").removeAttribute("src"); else { pendingPhoto = null; $("imgPrevImg").removeAttribute("src"); }
+  if (!fromPop && !CapApp) { ignorePops++; history.back(); }
+  return true;
+}
+$("imgViewX").onclick = () => closeMediaOverlays();
+$("imgViewPv").onclick = (e) => { if (e.target.id !== "imgViewImg") closeMediaOverlays(); };
+$("imgPrevNo").onclick = () => closeMediaOverlays();
+
+// Photos: shrink to at most 1080 px, JPEG, usually 80-140 KB.
+function shrinkChatPhoto(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file), im = new Image();
+    im.onload = () => {
+      try {
+        let scale = Math.min(1, 1080 / Math.max(im.naturalWidth, im.naturalHeight)), q = 0.76, out = "", w = 1, h = 1;
+        for (let i = 0; i < 7; i++) {
+          const cv = document.createElement("canvas");
+          w = cv.width = Math.max(1, Math.round(im.naturalWidth * scale)); h = cv.height = Math.max(1, Math.round(im.naturalHeight * scale));
+          const cx = cv.getContext("2d"); cx.fillStyle = "#fff"; cx.fillRect(0, 0, w, h); cx.drawImage(im, 0, 0, w, h);
+          out = cv.toDataURL("image/jpeg", q);
+          if (out.length < 150000) break;
+          q = Math.max(0.45, q - 0.07); scale *= 0.85;
+        }
+        URL.revokeObjectURL(url);
+        out.startsWith("data:image/jpeg;base64,") && out.length < 200000 ? resolve({ data: out, w, h }) : reject(new Error("big"));
+      } catch (e) { reject(e); }
+    };
+    im.onerror = () => { URL.revokeObjectURL(url); reject(new Error("load")); };
+    im.src = url;
+  });
+}
+let pendingPhoto = null, photoScope = null;
+function chatScope() {
+  if (dmOpen) {
+    if (blocksCache[dmOther]) { toast("Unblock this user to send messages."); return null; }
+    return { t: "d", id: dmConvId, other: dmOther };
+  }
+  return inRoom ? { t: "r", id: ROOM } : null;
+}
+["imgBtn", "dmImgBtn"].forEach((id) => { $(id).onclick = () => {
+  const sc = chatScope(); if (!sc) return;
+  photoScope = sc; $("imgFile").value = ""; $("imgFile").click();
+}; });
+$("imgFile").onchange = async () => {
+  const f = $("imgFile").files && $("imgFile").files[0];
+  $("imgFile").value = "";
+  if (!f || !photoScope) return;
+  if (!/^image\//.test(f.type)) { toast("Please pick a photo."); return; }
+  toast("Preparing photo…");
+  try {
+    const r = await shrinkChatPhoto(f);
+    pendingPhoto = Object.assign({ scope: photoScope }, r);
+    $("imgPrevImg").src = r.data; $("imgPrev").classList.add("open");
+    history.pushState({ img: true }, "");
+  } catch (e) { toast("Couldn't use that photo. Try another one."); }
+};
+$("imgPrevYes").onclick = () => {
+  const p = pendingPhoto; if (!p) return;
+  closeMediaOverlays();
+  sendMedia(p.scope, "i", p.data, { w: p.w, h: p.h });
+};
+
+// ---- Sending (message + media are saved together, or not at all) ----
+async function sendMedia(scope, kind, data, meta) {
+  const label = kind === "i" ? "📷 Photo" : "🎤 Voice message";
+  const key = push(ref(db, scope.t === "r" ? ROOM + "/messages" : "dms/" + scope.id + "/messages")).key;
+  cachePut(mcKey(scope, key), data);
+  pendingKeys.add(key);
+  playSendSound();
+  const extra = kind === "i" ? { k: "i", w: meta.w, h: meta.h } : { k: "a", d: meta.d };
+  const more = {};
+  more[mediaPath(scope, key)] = { uid, d: data, ts: serverTimestamp() };
+  more["mediaLast/" + uid + "/ts"] = serverTimestamp();
+  let ok = false;
+  if (scope.t === "r") {
+    const u = Object.assign({}, more);
+    u[ROOM + "/messages/" + key] = Object.assign({ uid, name: myName, text: label, ts: serverTimestamp() }, extra);
+    try { await update(ref(db), u); ok = true; } catch (e) {}
+  } else {
+    ok = await dmWrite(scope.id, scope.other, key, label, extra, more);
+  }
+  pendingKeys.delete(key);
+  const sel = (scope.t === "r" ? "#msgs" : "#dmMsgs") + ' .msg[data-key="' + key + '"]';
+  if (ok) { const t = document.querySelector(sel + " .tick"); if (t) t.textContent = " ✓"; }
+  else {
+    msgQueue = msgQueue.filter((x) => x[1] !== key);
+    const el = document.querySelector(sel); if (el) el.remove();
+    if (scope.t === "d") delete sentLocal[scope.id];
+    toast("Not sent. Wait a few seconds between photos/voice messages, and check your connection.");
+  }
+}
+
+// ---- Recording ----
+let rec = null;
+function setRecUI(r, html) { r.bar.innerHTML = ""; r.bar.append(html); }
+function micBtns() { return [["micBtn", "sendForm"], ["dmMicBtn", "dmForm"]]; }
+micBtns().forEach(([bid, fid]) => { $(bid).onclick = () => { const sc = chatScope(); if (sc) startRec($(fid), sc); }; });
+function mkBtn(txt, cls, fn, label) {
+  const b = document.createElement("button"); b.type = "button"; b.className = "mBtn " + (cls || ""); b.textContent = txt; b.onclick = fn;
+  if (label) b.setAttribute("aria-label", label); return b;
+}
+async function startRec(form, scope) {
+  if (rec) return;
+  if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) || typeof MediaRecorder === "undefined") { toast("Voice messages aren't supported on this device."); return; }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+  catch (e) { toast("Allow the microphone to record voice messages."); return; }
+  const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"].find((t) => MediaRecorder.isTypeSupported(t)) || "";
+  let mr;
+  try { mr = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 24000 } : { audioBitsPerSecond: 24000 }); }
+  catch (e) { stream.getTracks().forEach((t) => t.stop()); toast("Voice messages aren't supported on this device."); return; }
+  stopAllAudio();
+  const bar = document.createElement("div"); bar.className = "recBar"; form.append(bar); form.classList.add("rec");
+  const r = rec = { form, scope, mr, stream, bar, chunks: [], t0: Date.now(), timer: 0, state: "rec", mime: (mr.mimeType || mime || "audio/webm"), data: null, dur: 0 };
+  mr.ondataavailable = (e) => { if (e.data && e.data.size) r.chunks.push(e.data); };
+  mr.onstop = () => finishRec(r);
+  const wrap = document.createElement("div"); wrap.className = "recBar"; wrap.style.cssText = "flex:1;display:flex;align-items:center;gap:10px";
+  const info = document.createElement("div"); info.className = "rbInfo";
+  const dot = document.createElement("span"); dot.className = "dot";
+  const tm = document.createElement("span"); tm.textContent = "0:00";
+  const hint = document.createElement("span"); hint.style.cssText = "opacity:.6;font-weight:600;font-size:13px"; hint.textContent = "Recording… max " + VOICE_MAX + " s";
+  info.append(dot, tm, hint);
+  wrap.append(mkBtn("✕", "", () => cancelRec(), "Cancel recording"), info, mkBtn("■", "mic", () => stopRec(), "Stop recording"));
+  setRecUI(r, wrap);
+  mr.start();
+  r.timer = setInterval(() => {
+    const s = (Date.now() - r.t0) / 1000;
+    tm.textContent = fmtDur(s);
+    if (s >= VOICE_MAX) stopRec();
+  }, 250);
+}
+function stopRec() {
+  const r = rec; if (!r || r.state !== "rec") return;
+  r.state = "stopping"; clearInterval(r.timer);
+  r.dur = (Date.now() - r.t0) / 1000;
+  try { if (r.mr.state !== "inactive") r.mr.stop(); } catch (e) {}
+  r.stream.getTracks().forEach((t) => t.stop());
+}
+function cancelRec() {
+  const r = rec; if (!r) return;
+  r.cancelled = true; rec = null; clearInterval(r.timer);
+  try { if (r.mr.state !== "inactive") r.mr.stop(); } catch (e) {}
+  r.stream.getTracks().forEach((t) => t.stop());
+  r.bar.remove(); r.form.classList.remove("rec");
+}
+function finishRec(r) {
+  if (r.cancelled || rec !== r) return;
+  if (r.dur < 1) { toast("Too short. Hold on a little longer."); cancelRec(); return; }
+  const base = String(r.mime).split(";")[0].toLowerCase();
+  if (!/^audio\/(webm|ogg|mp4|aac)$/.test(base)) { toast("Voice messages aren't supported on this device."); cancelRec(); return; }
+  const fr = new FileReader();
+  fr.onload = () => {
+    if (rec !== r) return;
+    const b64 = String(fr.result).split("base64,")[1] || "";
+    r.data = "data:" + base + ";base64," + b64;
+    if (!b64 || r.data.length >= 230000) { toast("That recording is too big. Try a shorter one."); cancelRec(); return; }
+    r.state = "ready";
+    const wrap = document.createElement("div"); wrap.className = "recBar";
+    const pl = audioBody(Math.ceil(r.dur), async () => r.data);
+    const send = mkBtn("➤", "mic", async () => {
+      const sc = r.scope;
+      if (sc.t === "d" && blocksCache[sc.other]) { toast("Unblock this user to send messages."); return; }
+      const d = r.data, dur = Math.ceil(r.dur);
+      cancelRec();
+      sendMedia(sc, "a", d, { d: Math.max(1, Math.min(61, dur)) });
+    }, "Send voice message");
+    wrap.append(mkBtn("🗑", "", () => cancelRec(), "Delete recording"), pl, send);
+    setRecUI(r, wrap);
+  };
+  fr.onerror = () => { toast("Couldn't read the recording."); cancelRec(); };
+  fr.readAsDataURL(new Blob(r.chunks, { type: base }));
+}
+// If the app goes to the background mid-recording, stop and keep what was recorded.
+document.addEventListener("visibilitychange", () => { if (document.hidden && rec && rec.state === "rec") stopRec(); });
 
 // ---- Block / unblock ----
 function askBlock(otherUid, name) {
