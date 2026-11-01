@@ -643,22 +643,23 @@ function watchBottom(box) {
     new ResizeObserver(() => { if (stick.get(box)) box.scrollTop = box.scrollHeight; }).observe(box);
   }
 }
-watchBottom($("msgs")); watchBottom($("dmMsgs"));
+watchBottom($("msgs")); watchBottom($("dmMsgs")); watchBottom($("gMsgs"));
 if (window.visualViewport) {
   window.visualViewport.addEventListener("resize", () =>
-    ["msgs", "dmMsgs"].forEach((id) => { const b = $(id); if (stick.get(b)) b.scrollTop = b.scrollHeight; }));
+    ["msgs", "dmMsgs", "gMsgs"].forEach((id) => { const b = $(id); if (stick.get(b)) b.scrollTop = b.scrollHeight; }));
 }
 // Message box: grows with the text (up to ~5 lines). On a phone the keyboard's Enter key adds a
 // new line and the ➤ button sends. With a physical keyboard Enter sends and Shift+Enter adds a line.
 function autosize(t) {
   if (t.form) t.form.classList.toggle("hasText", !!t.value.trim());   // mic when empty, ➤ when there is text
-  const box = $(t.id === "msgInput" ? "msgs" : "dmMsgs");
+  const box = $(inputBox(t.id));
   const wasAtBottom = stick.get(box);
   t.style.height = "auto";                       // measure at one line,
   t.style.height = Math.min(t.scrollHeight, 120) + "px";
   if (wasAtBottom) box.scrollTop = box.scrollHeight; // then keep the newest message in view
 }
-["msgInput", "dmInput"].forEach((id) => {
+const inputBox = (id) => (id === "msgInput" ? "msgs" : id === "dmInput" ? "dmMsgs" : "gMsgs");
+["msgInput", "dmInput", "gInput"].forEach((id) => {
   const t = $(id);
   t.addEventListener("input", () => autosize(t));
   t.addEventListener("keydown", (e) => {
@@ -668,12 +669,12 @@ function autosize(t) {
     }
   });
   t.addEventListener("focus", () => setTimeout(() => {
-    const b = $(id === "msgInput" ? "msgs" : "dmMsgs");
+    const b = $(inputBox(id));
     if (stick.get(b)) b.scrollTop = b.scrollHeight;
   }, 300));
 });
 
-function buildMessage(m, key) {
+function buildMessage(m, key, sc) {
   const mine = m.uid === uid;
   const d = document.createElement("div");
   d.className = "msg " + (mine ? "mine" : "other");
@@ -689,7 +690,7 @@ function buildMessage(m, key) {
     who.classList.add("tap");
     who.onclick = () => openUserSheet(m.uid, m.name);
   }
-  const rScope = { t: "r", id: ROOM };
+  const rScope = sc || { t: "r", id: ROOM };
   const body = m.k ? mediaBody(m, key, rScope, d) : textBody(m.text);
   const tm = document.createElement("div");
   tm.className = "tm";
@@ -804,6 +805,8 @@ function goBack() {
   if (profileOpen) { closeProfile(); return; }
   if (blockedOpen) { closeBlocked(); return; }
   if (settingsOpen) { closeSettings(); return; }
+  if (grpInfoOpen) { closeGroupInfo(); return; }
+  if (grpOpen) { leaveGroup(); return; }
   if (dmOpen) { leaveDm(); return; }
   if (inRoom) { leaveChat(); return; }
   // On the lobby / login screens: send the app to the background like other apps.
@@ -823,6 +826,8 @@ window.addEventListener("popstate", () => {
   if (profileOpen) { closeProfile(); return; }
   if (blockedOpen) { closeBlocked(); return; }
   if (settingsOpen) { closeSettings(); return; }
+  if (grpInfoOpen) { closeGroupInfo(); return; }
+  if (grpOpen) { leaveGroup(); return; }
   if (dmOpen) { leaveDm(); return; }
   if (inRoom) leaveChat(true);
 });
@@ -1264,6 +1269,7 @@ function setTab(t) {
   $("roomsPane").hidden = t !== "rooms";
   $("chatsPane").hidden = t !== "chats";
   $("storiesPane").hidden = t !== "stories";
+  if (t === "chats") refreshGroups(false);          // group names/previews are read when this tab opens
   if (t === "stories") loadStories(false);          // stories are fetched only when this tab opens
 }
 $("tabRooms").onclick = () => setTab("rooms");
@@ -1276,7 +1282,7 @@ const dmVisible = (e) => e && e.with && e.ts && e.ts > (Number(e.clearedAt) || 0
 function startPrivateListeners() {
   if (inboxOff || !uid) return;
   startPresence();
-  initNotifs(); startRoomNotifs();
+  initNotifs(); startRoomNotifs(); startGroupList();
   inboxReady = false;
   inboxOff = onValue(ref(db, "inbox/" + uid), (snap) => {
     const next = snap.val() || {};
@@ -1306,6 +1312,7 @@ function stopPrivateListeners() {
   Object.values(peerOff).forEach((f) => f()); peerOff = {}; peerPresence = {};
   stopTypingWatch(); clearTimeout(typingIdleTimer); lastTypingSent = 0;
   inboxCache = {}; blocksCache = {}; inboxReady = false;
+  stopGroupList(); grpOpen = false; grpInfoOpen = false; grpId = null; grpOffs.forEach((f) => { try { f(); } catch (e) {} }); grpOffs = [];
   stopRoomNotifs();
   Object.keys(msgCache).forEach((k) => delete msgCache[k]); Object.keys(memCache).forEach((k) => delete memCache[k]);
   stLoadedAt = 0; stUsers = []; stMine = []; Object.keys(stCache).forEach((k) => delete stCache[k]);
@@ -1335,7 +1342,8 @@ function renderChats() {
     .filter(([, e]) => dmVisible(e))
     .sort((a, b) => b[1].ts - a[1].ts);
   list.innerHTML = "";
-  $("dmEmpty").style.display = items.length ? "none" : "";
+  $("dmEmpty").style.display = items.length || Object.keys(grpList).length ? "none" : "";
+  updateDmLabel(items.length);
   items.forEach(([, e]) => {
     const b = document.createElement("button");
     const un = unreadOf(e);
@@ -1544,7 +1552,7 @@ $("dmForm").addEventListener("submit", async (e) => {
 // Everything here works for rooms (scope.t = "r") and private chats (scope.t = "d").
 const hiddenSets = {};                       // "r<room>" / "d<conv>" -> Set of keys I deleted "for me"
 function isHidden(scope, key) { const s = hiddenSets[scope.t + scope.id]; return !!(s && key && s.has(key)); }
-function boxOf(scope) { return $(scope.t === "r" ? "msgs" : "dmMsgs"); }
+function boxOf(scope) { return $(scope.t === "r" ? "msgs" : scope.t === "d" ? "dmMsgs" : "gMsgs"); }
 async function loadHidden(scope) {
   const sk = scope.t + scope.id;
   try {
@@ -1660,7 +1668,7 @@ $("linkSheet").onclick = (e) => { if (e.target.id === "linkSheet") { $("linkShee
 
 // ---- replies ----
 let replyTo = null;       // { sk, key, rn, rf, rt }
-function barFor(scope) { return $(scope.t === "r" ? "replyBar" : "dmReplyBar"); }
+function barFor(scope) { return $(scope.t === "r" ? "replyBar" : scope.t === "d" ? "dmReplyBar" : "gReplyBar"); }
 function setReply(scope, info) {
   clearReply();
   replyTo = Object.assign({ sk: scope.t + scope.id }, info);
@@ -1668,16 +1676,16 @@ function setReply(scope, info) {
   bar.querySelector("b").textContent = info.rn === myName || info.rf === uid ? "You" : (info.rn || "Reply");
   bar.querySelector("span").textContent = info.rt;
   bar.hidden = false;
-  $(scope.t === "r" ? "msgInput" : "dmInput").focus();
+  $(scope.t === "r" ? "msgInput" : scope.t === "d" ? "dmInput" : "gInput").focus();
 }
-function clearReply() { replyTo = null; $("replyBar").hidden = true; $("dmReplyBar").hidden = true; }
+function clearReply() { replyTo = null; $("replyBar").hidden = true; $("dmReplyBar").hidden = true; $("gReplyBar").hidden = true; }
 document.querySelectorAll(".replyBar .rbx").forEach((b) => { b.onclick = clearReply; });
 // the extra fields a new message carries when I am replying (and the reply is cleared)
 function takeReply(scope) {
   const r = replyTo;
   if (!r || r.sk !== scope.t + scope.id) { clearReply(); return {}; }
   clearReply();
-  return scope.t === "r" ? { rn: r.rn, rk: r.rk, rt: r.rt } : { rf: r.rf, rk: r.rk, rt: r.rt };
+  return scope.t === "d" ? { rf: r.rf, rk: r.rk, rt: r.rt } : { rn: r.rn, rk: r.rk, rt: r.rt };
 }
 function quoteEl(m, scope) {
   const q = document.createElement("div"); q.className = "quote";
@@ -1700,7 +1708,7 @@ function quoteEl(m, scope) {
 let pressUntil = 0, menuMsg = null;
 function closeMsgSheets() {
   let any = false;
-  for (const id of ["msgMenu", "delSheet", "linkSheet"]) { if ($(id).classList.contains("open")) { $(id).classList.remove("open"); any = true; } }
+  for (const id of ["msgMenu", "delSheet", "linkSheet", "gNewSheet", "gActSheet"]) { if ($(id).classList.contains("open")) { $(id).classList.remove("open"); any = true; } }
   return any;
 }
 function initPress(box) {
@@ -1717,8 +1725,15 @@ function initPress(box) {
   box.addEventListener("contextmenu", (e) => { const el = find(e); if (el) { e.preventDefault(); pressUntil = Date.now() + 700; openMsgMenu(el); } });
   box.addEventListener("click", (e) => { if (Date.now() < pressUntil) { e.preventDefault(); e.stopPropagation(); } }, true);
 }
-initPress($("msgs")); initPress($("dmMsgs"));
-function canDeleteAll(m) { return m.mine || !!m.mod; }
+initPress($("msgs")); initPress($("dmMsgs")); initPress($("gMsgs"));
+function canDeleteAll(m) {
+  if (m.mine) return true;
+  if (m.scope.t !== "g") return false;
+  const me = myRole();
+  if (me === "a") return true;
+  if (me === "m") { const a = roleOf(m.uid); return a !== "a" && a !== "m"; }
+  return false;
+}
 function openMsgMenu(el) {
   const m = el._m;
   if (!m || $("msgMenu").classList.contains("open") || (m.scope.t === "d" && blocksCache[dmOther])) return;
@@ -1746,6 +1761,7 @@ $("mmDel").onclick = () => {
   const m = menuMsg; $("msgMenu").classList.remove("open"); if (!m || !m.key) return;
   if (pendingKeys.has(m.key)) { toast("Wait until it is sent."); return; }
   $("delAll").hidden = !canDeleteAll(m);
+  $("delAll").textContent = m.mine ? "Delete for everyone" : "Remove for everyone (moderator)";
   $("delSheet").classList.add("open");
 };
 $("delNo").onclick = () => $("delSheet").classList.remove("open");
@@ -1756,7 +1772,7 @@ $("delMe").onclick = () => {
   set(ref(db, "hidden/" + uid + "/" + m.scope.id + "/" + m.key), true).catch(() => toast("Couldn't save that. It may come back later."));
 };
 function msgNodePath(scope, key) {
-  return scope.t === "r" ? scope.id + "/messages/" + key : "dms/" + scope.id + "/messages/" + key;
+  return scope.t === "r" ? scope.id + "/messages/" + key : scope.t === "d" ? "dms/" + scope.id + "/messages/" + key : "groups/" + scope.id + "/messages/" + key;
 }
 $("delAll").onclick = async () => {
   const m = menuMsg; $("delSheet").classList.remove("open"); if (!m || !canDeleteAll(m)) return;
@@ -1793,7 +1809,7 @@ function cachePut(k, v) {
   mediaCache.delete(k); mediaCache.set(k, v);
   while (mediaCache.size > 24) mediaCache.delete(mediaCache.keys().next().value);
 }
-function mediaPath(scope, key) { return (scope.t === "r" ? "roomMedia/" : "dmMedia/") + scope.id + "/" + key; }
+function mediaPath(scope, key) { return (scope.t === "r" ? "roomMedia/" : scope.t === "d" ? "dmMedia/" : "groupMedia/") + scope.id + "/" + key; }
 // null = not available, "gone" = expired, otherwise the data URL
 async function fetchMedia(scope, key) {
   const ck = mcKey(scope, key);
@@ -1918,13 +1934,17 @@ function shrinkChatPhoto(file) {
 }
 let pendingPhoto = null, photoScope = null;
 function chatScope() {
+  if (grpOpen) {
+    if (isMuted(grpMembers[uid])) { toast("You are muted in this group."); return null; }
+    return { t: "g", id: grpId };
+  }
   if (dmOpen) {
     if (blocksCache[dmOther]) { toast("Unblock this user to send messages."); return null; }
     return { t: "d", id: dmConvId, other: dmOther };
   }
   return inRoom ? { t: "r", id: ROOM } : null;
 }
-["imgBtn", "dmImgBtn"].forEach((id) => { $(id).onclick = () => {
+["imgBtn", "dmImgBtn", "gImgBtn"].forEach((id) => { $(id).onclick = () => {
   const sc = chatScope(); if (!sc) return;
   photoScope = sc; $("imgFile").value = ""; $("imgFile").click();
 }; });
@@ -1950,7 +1970,7 @@ $("imgPrevYes").onclick = () => {
 // ---- Sending (message + media are saved together, or not at all) ----
 async function sendMedia(scope, kind, data, meta) {
   const label = kind === "i" ? "📷 Photo" : "🎤 Voice message";
-  const key = push(ref(db, scope.t === "r" ? ROOM + "/messages" : "dms/" + scope.id + "/messages")).key;
+  const key = push(ref(db, msgNodePath(scope, "x").replace(/\/x$/, ""))).key;
   cachePut(mcKey(scope, key), data);
   pendingKeys.add(key);
   playSendSound();
@@ -1959,15 +1979,16 @@ async function sendMedia(scope, kind, data, meta) {
   more[mediaPath(scope, key)] = { uid, d: data, ts: serverTimestamp() };
   more["mediaLast/" + uid + "/ts"] = serverTimestamp();
   let ok = false;
-  if (scope.t === "r") {
+  if (scope.t === "r" || scope.t === "g") {
     const u = Object.assign({}, more);
-    u[ROOM + "/messages/" + key] = Object.assign({ uid, name: myName, text: label, ts: serverTimestamp() }, extra);
+    u[msgNodePath(scope, key)] = Object.assign({ uid, name: myName, text: label, ts: serverTimestamp() }, extra);
+    if (scope.t === "g") u["groups/" + scope.id + "/last"] = { t: label, ts: serverTimestamp(), n: myName };
     try { await update(ref(db), u); ok = true; } catch (e) {}
   } else {
     ok = await dmWrite(scope.id, scope.other, key, label, extra, more);
   }
   pendingKeys.delete(key);
-  const sel = (scope.t === "r" ? "#msgs" : "#dmMsgs") + ' .msg[data-key="' + key + '"]';
+  const sel = "#" + boxOf(scope).id + ' .msg[data-key="' + key + '"]';
   if (ok) { const t = document.querySelector(sel + " .tick"); if (t) t.textContent = " ✓"; }
   else {
     msgQueue = msgQueue.filter((x) => x[1] !== key);
@@ -1980,7 +2001,7 @@ async function sendMedia(scope, kind, data, meta) {
 // ---- Recording ----
 let rec = null;
 function setRecUI(r, html) { r.bar.innerHTML = ""; r.bar.append(html); }
-function micBtns() { return [["micBtn", "sendForm"], ["dmMicBtn", "dmForm"]]; }
+function micBtns() { return [["micBtn", "sendForm"], ["dmMicBtn", "dmForm"], ["gMicBtn", "gForm"]]; }
 micBtns().forEach(([bid, fid]) => { $(bid).onclick = () => { const sc = chatScope(); if (sc) startRec($(fid), sc); }; });
 function mkBtn(txt, cls, fn, label) {
   const b = document.createElement("button"); b.type = "button"; b.className = "mBtn " + (cls || ""); b.textContent = txt; b.onclick = fn;
@@ -2060,6 +2081,354 @@ function finishRec(r) {
 // If the app goes to the background mid-recording, stop and keep what was recorded.
 document.addEventListener("visibilitychange", () => { if (document.hidden && rec && rec.state === "rec") stopRec(); });
 
+// ---------- Groups ----------
+// groups/<id>/{meta, members/<uid>{r,j,mu}, messages, last}. r: "a" admin (the creator), "m" moderator, "u" member.
+// mu = "muted until" (a time). All permissions are enforced by the database rules, not just by these buttons.
+const GROUP_MAX = 50, MUTE_FOR_EVER = 4102444800000;
+let grpOpen = false, grpInfoOpen = false, grpId = null, grpMeta = null, grpMembers = {}, grpReady = false, grpOffs = [], grpMuteTimer = 0, grpLeaving = false;
+let grpList = {}, grpCache = {}, grpListOff = null;
+const myRole = () => (grpMembers[uid] && grpMembers[uid].r) || "";
+const roleOf = (u) => (grpMembers[u] && grpMembers[u].r) || "";
+const isMuted = (m) => !!(m && Number(m.mu) > Date.now());
+function startGroupList() {
+  if (grpListOff || !uid) return;
+  grpListOff = onValue(ref(db, "userGroups/" + uid), (snap) => { grpList = snap.val() || {}; refreshGroups(true); }, () => {});
+}
+function stopGroupList() {
+  if (grpListOff) { grpListOff(); grpListOff = null; }
+  grpList = {}; grpCache = {}; $("grpList").innerHTML = ""; $("grpLabel").hidden = true; $("dmLabel").hidden = true;
+}
+async function refreshGroups(force) {
+  const ids = Object.keys(grpList), now = Date.now();
+  await Promise.all(ids.map(async (gid) => {
+    const c = grpCache[gid];
+    if (!force && c && now - c.t < 30000) return;
+    try {
+      const [m, l] = await Promise.all([get(ref(db, "groups/" + gid + "/meta")), get(ref(db, "groups/" + gid + "/last"))]);
+      grpCache[gid] = { meta: m.val(), last: l.val(), t: Date.now(), gone: !m.exists() };
+    } catch (e) {
+      if (e && e.code === "PERMISSION_DENIED") grpCache[gid] = { gone: true, t: Date.now() };   // I am no longer in it
+      else if (!c) grpCache[gid] = { meta: null, last: null, t: Date.now(), err: true };
+    }
+  }));
+  ids.forEach((gid) => {
+    const c = grpCache[gid];
+    if (c && c.gone) { remove(ref(db, "userGroups/" + uid + "/" + gid)).catch(() => {}); delete grpCache[gid]; delete grpList[gid]; }
+  });
+  renderGroups();
+}
+function updateDmLabel(dmCount) {
+  const hasG = Object.keys(grpList).length > 0;
+  $("dmLabel").hidden = !(hasG && dmCount > 0);
+  $("grpLabel").hidden = !hasG;
+}
+function renderGroups() {
+  const box = $("grpList");
+  const rows = Object.keys(grpList).map((gid) => [gid, grpCache[gid]]).filter(([, c]) => c && c.meta)
+    .sort((a, b) => ((b[1].last && b[1].last.ts) || b[1].meta.ts || 0) - ((a[1].last && a[1].last.ts) || a[1].meta.ts || 0));
+  box.innerHTML = "";
+  rows.forEach(([gid, c]) => {
+    const b = document.createElement("button"); b.className = "dmItem"; b.type = "button";
+    const av = document.createElement("div"); av.className = "av"; drawAv(av, c.meta.ph ? { ph: c.meta.ph } : null, c.meta.name);
+    const mid = document.createElement("div"); mid.className = "mid";
+    const nm = document.createElement("div"); nm.className = "nm"; nm.textContent = c.meta.name;
+    const pv = document.createElement("div"); pv.className = "pv";
+    pv.textContent = c.last ? (c.last.n === myName ? "You" : c.last.n) + ": " + c.last.t : "No messages yet";
+    mid.append(nm, pv);
+    const rt = document.createElement("div"); rt.className = "rt2";
+    const tm = document.createElement("div"); tm.className = "tmx"; tm.textContent = c.last ? fmtListTime(c.last.ts) : ""; rt.append(tm);
+    b.append(av, mid, rt);
+    b.onclick = () => openGroup(gid);
+    box.append(b);
+  });
+  updateDmLabel(Object.values(inboxCache).filter(dmVisible).length);
+  $("dmEmpty").style.display = rows.length || Object.values(inboxCache).some(dmVisible) ? "none" : "";
+}
+
+// ---- create ----
+let gNewPh = null, gFileMode = "new";
+function drawNewPic() { drawAv($("gNewPic"), gNewPh ? { ph: gNewPh } : null, "+"); $("gNewPicNo").hidden = !gNewPh; }
+$("newGroupBtn").onclick = () => {
+  gNewPh = null; $("gNewName").value = ""; drawNewPic();
+  $("gNewSheet").classList.add("open"); setTimeout(() => $("gNewName").focus(), 150);
+};
+$("gNewNo").onclick = () => $("gNewSheet").classList.remove("open");
+$("gNewSheet").onclick = (e) => { if (e.target.id === "gNewSheet") $("gNewSheet").classList.remove("open"); };
+$("gNewPicBtn").onclick = () => { gFileMode = "new"; $("gFile").click(); };
+$("gNewPicNo").onclick = () => { gNewPh = null; drawNewPic(); };
+$("gFile").onchange = async () => {
+  const f = $("gFile").files && $("gFile").files[0]; $("gFile").value = "";
+  if (!f) return;
+  if (!/^image\//.test(f.type)) { toast("Please pick a photo."); return; }
+  let ph; try { ph = await shrinkPhoto(f); } catch (e) { toast("Couldn't use that photo."); return; }
+  if (gFileMode === "new") { gNewPh = ph; drawNewPic(); return; }
+  if (!grpId || myRole() !== "a") return;
+  try { await set(ref(db, "groups/" + grpId + "/meta/ph"), ph); toast("Group picture updated."); } catch (e) { toast("Couldn't change the picture."); }
+};
+$("gNewOk").onclick = async () => {
+  const name = $("gNewName").value.trim().replace(/\s+/g, " ");
+  if (!name) { toast("Give the group a name."); return; }
+  $("gNewOk").disabled = true;
+  const gid = push(ref(db, "groups")).key, now = serverTimestamp();
+  const meta = { name: name.slice(0, 30), by: uid, ts: now }; if (gNewPh) meta.ph = gNewPh;
+  const u = {};
+  u["groups/" + gid + "/meta"] = meta;
+  u["groups/" + gid + "/members/" + uid] = { r: "a", j: now };
+  u["userGroups/" + uid + "/" + gid] = true;
+  u["groupMake/" + uid + "/ts"] = now;
+  try {
+    await update(ref(db), u);
+    $("gNewSheet").classList.remove("open");
+    grpCache[gid] = { meta: { name: meta.name, ph: gNewPh || undefined, by: uid, ts: Date.now() }, last: null, t: Date.now() };
+    grpList[gid] = true;
+    openGroup(gid);
+    toast("Group created. Tap the group name to add people.");
+  } catch (e) { toast("Couldn't create the group. Wait 20 seconds between groups and check your connection."); }
+  $("gNewOk").disabled = false;
+};
+
+// ---- open / close ----
+function paintGroupHead() {
+  $("gTitle").textContent = grpMeta ? grpMeta.name : "…";
+  drawAv($("gAv"), grpMeta && grpMeta.ph ? { ph: grpMeta.ph } : null, grpMeta ? grpMeta.name : "G");
+}
+function openGroup(gid) {
+  if (!gid || grpOpen) return;
+  grpOpen = true; grpId = gid; grpLeaving = false; grpReady = false; grpMembers = {};
+  grpMeta = (grpCache[gid] && grpCache[gid].meta) || null;
+  history.pushState({ grp: true }, "");
+  $("gMsgs").innerHTML = ""; stick.set($("gMsgs"), true);
+  $("gSub").textContent = " ";
+  paintGroupHead(); show("grp"); updateGroupComposer();
+  const sc = { t: "g", id: gid };
+  const gone = (msg) => { if (grpId !== gid) return; if (msg && !grpLeaving) toast(msg); remove(ref(db, "userGroups/" + uid + "/" + gid)).catch(() => {}); delete grpList[gid]; delete grpCache[gid]; leaveGroup(); };
+  grpOffs.push(onValue(ref(db, "groups/" + gid + "/meta"), (s) => {
+    if (grpId !== gid) return;
+    if (!s.exists()) { gone("You were removed from this group, or it was deleted."); return; }
+    grpMeta = s.val(); grpCache[gid] = Object.assign(grpCache[gid] || { t: Date.now() }, { meta: grpMeta });
+    paintGroupHead(); if (grpInfoOpen) renderGroupInfo();
+  }, () => gone("You were removed from this group, or it was deleted.")));
+  grpOffs.push(onValue(ref(db, "groups/" + gid + "/members"), (s) => {
+    if (grpId !== gid) return;
+    const v = s.val() || {}, had = grpReady;
+    grpMembers = v; grpReady = true;
+    if (!v[uid]) { if (had) gone("You were removed from this group, or it was deleted."); return; }
+    $("gSub").textContent = Object.keys(v).length + " members";
+    updateGroupComposer(); if (grpInfoOpen) renderGroupInfo();
+  }, () => {}));
+  const q = query(ref(db, "groups/" + gid + "/messages"), orderByChild("ts"), limitToLast(100));
+  grpOffs.push(onChildAdded(q, (snap) => { if (grpId === gid) addGroupMessage(snap.val(), snap.key); }, () => {}));
+  grpOffs.push(onChildRemoved(q, (snap) => { if (grpId === gid) removeMsgEl(sc, snap.key); }));
+  loadHidden(sc);
+}
+function leaveGroup() {
+  if (!grpOpen) return;
+  grpOpen = false; grpInfoOpen = false;
+  cancelRec(); stopAllAudio(); clearReply(); closeMsgSheets(); clearTimeout(grpMuteTimer);
+  grpOffs.forEach((f) => { try { f(); } catch (e) {} }); grpOffs = [];
+  grpId = null; grpMeta = null; grpMembers = {};
+  show("lobby"); setTab("chats"); refreshGroups(true);
+}
+$("gBack").onclick = () => { if (CapApp) leaveGroup(); else history.back(); };
+$("giBack").onclick = () => { if (CapApp) closeGroupInfo(); else history.back(); };
+function updateGroupComposer() {
+  const me = grpMembers[uid], muted = isMuted(me);
+  $("gForm").style.display = muted ? "none" : "";
+  $("gMutedBar").classList.toggle("show", muted);
+  clearTimeout(grpMuteTimer);
+  if (muted) {
+    cancelRec();
+    $("gMutedBar").textContent = me.mu >= MUTE_FOR_EVER ? "🔇 A moderator muted you in this group." : "🔇 You are muted until " + fmtTime(me.mu) + ".";
+    if (me.mu < MUTE_FOR_EVER) grpMuteTimer = setTimeout(updateGroupComposer, Math.min(me.mu - Date.now() + 500, 2000000000));
+  }
+}
+function addGroupMessage(m, key) {
+  if (!m || typeof m.text !== "string" || !grpId) return;
+  const sc = { t: "g", id: grpId }, box = $("gMsgs");
+  if (key && box.querySelector('[data-key="' + key + '"]')) return;
+  if (isHidden(sc, key)) return;
+  const nearBottom = stick.get(box) || box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  const el = buildMessage(m, key, sc);
+  box.append(el);
+  while (box.childElementCount > 300) box.firstElementChild.remove();
+  if (nearBottom || m.uid === uid) box.scrollTop = box.scrollHeight;
+}
+$("gForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("gInput").value.trim();
+  if (!text || !grpId) return;
+  if (isMuted(grpMembers[uid])) { toast("You are muted in this group."); return; }
+  const gid = grpId;
+  $("gInput").value = ""; autosize($("gInput"));
+  playSendSound();
+  const key = push(ref(db, "groups/" + gid + "/messages")).key;
+  const rx = takeReply({ t: "g", id: gid });
+  pendingKeys.add(key);
+  const u = {};
+  u["groups/" + gid + "/messages/" + key] = Object.assign({ uid, name: myName, text, ts: serverTimestamp() }, rx);
+  u["groups/" + gid + "/last"] = { t: text.slice(0, 80), ts: serverTimestamp(), n: myName };
+  try {
+    await update(ref(db), u);
+    pendingKeys.delete(key);
+    const t = document.querySelector('#gMsgs .msg[data-key="' + key + '"] .tick'); if (t) t.textContent = " ✓";
+  } catch (err) {
+    pendingKeys.delete(key);
+    const el = document.querySelector('#gMsgs .msg[data-key="' + key + '"]'); if (el) el.remove();
+    toast("Message not sent. Check your connection. You may also be muted.");
+    if (grpId === gid) { $("gInput").value = text; autosize($("gInput")); }
+  }
+});
+$("gMenuBtn").onclick = () => {
+  const items = [{ label: "👥  Group info", fn: openGroupInfo }];
+  if (myRole() !== "a") items.push({ label: "Leave group", danger: true, fn: askLeaveGroup });
+  openMenu($("gMenuBtn"), items);
+};
+$("gHead").onclick = () => openGroupInfo();
+
+// ---- group info ----
+function openGroupInfo() {
+  if (!grpOpen || grpInfoOpen) return;
+  grpInfoOpen = true; history.pushState({ gi: true }, "");
+  show("ginfo"); renderGroupInfo();
+}
+function closeGroupInfo() { if (!grpInfoOpen) return; grpInfoOpen = false; show("grp"); }
+function renderGroupInfo() {
+  const me = myRole(), admin = me === "a", name = grpMeta ? grpMeta.name : "";
+  drawAv($("giPic"), grpMeta && grpMeta.ph ? { ph: grpMeta.ph } : null, name || "G");
+  $("giNameView").textContent = name; $("giNameView").hidden = admin;
+  $("giNameRow").hidden = !admin;
+  if (admin && document.activeElement !== $("giNameInput")) $("giNameInput").value = name;
+  $("giPicBtns").hidden = !admin; $("giPicRemove").hidden = !(grpMeta && grpMeta.ph);
+  $("giAdmin").hidden = !admin; $("giMr").checked = !!(grpMeta && grpMeta.mr);
+  $("giLeave").hidden = admin; $("giDelete").hidden = !admin;
+  const ids = Object.keys(grpMembers).sort((a, b) => ("amu".indexOf(roleOf(a)) - "amu".indexOf(roleOf(b))) || ((grpMembers[a].j || 0) - (grpMembers[b].j || 0)));
+  $("giCount").textContent = "MEMBERS (" + ids.length + ")";
+  const list = $("giList"); list.innerHTML = "";
+  ids.forEach((u) => {
+    const b = document.createElement("button"); b.type = "button"; b.className = "giMem";
+    const av = document.createElement("div"); av.className = "av"; av.textContent = "?";
+    const nm = document.createElement("div"); nm.className = "nm"; nm.textContent = nameCache[u] || "…";
+    const r = roleOf(u);
+    const tag = (txt, cls) => { const t = document.createElement("span"); t.className = "gTag " + cls; t.textContent = txt; return t; };
+    b.append(av, nm);
+    if (r === "a") b.append(tag("Admin", "")); else if (r === "m") b.append(tag("Moderator", "mod"));
+    if (isMuted(grpMembers[u])) b.append(tag("Muted", "mute"));
+    if (u === uid) { const y = document.createElement("span"); y.style.cssText = "color:var(--muted);font-size:12px"; y.textContent = "You"; b.append(y); }
+    b.onclick = () => openMemberSheet(u);
+    list.append(b);
+    getName(u).then((n) => { nm.textContent = n || "Unknown user"; av.textContent = (n || "?")[0].toUpperCase(); paintAv(av, u, n); });
+  });
+  const chips = $("giChips"); chips.innerHTML = "";
+  if (admin) {
+    const seen = new Set();
+    Object.values(inboxCache).forEach((e) => {
+      if (!e || !e.with || grpMembers[e.with] || blocksCache[e.with] || seen.has(e.with) || seen.size >= 8) return;
+      seen.add(e.with);
+      const b = document.createElement("button"); b.type = "button"; b.textContent = "+ …";
+      b.onclick = () => addMember(e.with);
+      chips.append(b); getName(e.with).then((n) => { b.textContent = "+ " + (n || "user"); });
+    });
+  }
+}
+$("giNameRow").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = $("giNameInput").value.trim().replace(/\s+/g, " ");
+  if (!name || !grpId || myRole() !== "a") return;
+  try { await set(ref(db, "groups/" + grpId + "/meta/name"), name.slice(0, 30)); toast("Name saved."); } catch (err) { toast("Couldn't save the name."); }
+});
+$("giPicChange").onclick = () => { gFileMode = "edit"; $("gFile").click(); };
+$("giPicRemove").onclick = async () => { try { await remove(ref(db, "groups/" + grpId + "/meta/ph")); } catch (e) { toast("Couldn't remove the picture."); } };
+$("giMr").onchange = async () => {
+  try { await set(ref(db, "groups/" + grpId + "/meta/mr"), $("giMr").checked); }
+  catch (e) { toast("Couldn't change that."); $("giMr").checked = !!(grpMeta && grpMeta.mr); }
+};
+async function addMember(u) {
+  if (!grpId || myRole() !== "a" || !u) return;
+  if (grpMembers[u]) { toast("Already in the group."); return; }
+  if (Object.keys(grpMembers).length >= GROUP_MAX) { toast("A group holds up to " + GROUP_MAX + " people."); return; }
+  const gid = grpId;
+  try { await set(ref(db, "groups/" + gid + "/members/" + u), { r: "u", j: serverTimestamp() }); }
+  catch (e) { toast("Couldn't add them. They may have blocked you."); return; }
+  try { await set(ref(db, "userGroups/" + u + "/" + gid), true); } catch (e) {}
+  toast(((await getName(u)) || "They") + " was added.");
+}
+$("giAddForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const v = $("giAddInput").value.trim();
+  if (!v) return;
+  if (!validName(v)) { toast("Usernames are 3–15 letters, numbers or _"); return; }
+  $("giAddBtn").disabled = true;
+  try {
+    const other = (await withTimeout(get(ref(db, "names/" + v.toLowerCase())), 10000)).val();
+    if (!other) toast("No user named “" + v + "”.");
+    else if (other === uid) toast("That's you 🙂");
+    else { $("giAddInput").value = ""; await addMember(other); }
+  } catch (err) { toast("Couldn't search. Check your connection."); }
+  $("giAddBtn").disabled = false;
+});
+// ---- member actions (admin / moderator) ----
+function openMemberSheet(u) {
+  const me = myRole(), tr = roleOf(u), box = $("gActBox");
+  if (!me || me === "u" || u === uid || tr === "a") return;
+  const canMute = me === "a" || (me === "m" && tr === "u");
+  const canRemove = me === "a" || (me === "m" && tr === "u" && grpMeta && grpMeta.mr === true);
+  box.innerHTML = "";
+  const head = document.createElement("div"); head.className = "mmPrev"; head.textContent = (nameCache[u] || "Member") + (tr === "m" ? " · Moderator" : "");
+  box.append(head);
+  const add = (label, fn, danger) => {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = label; if (danger) b.className = "dng";
+    b.onclick = async () => { $("gActSheet").classList.remove("open"); try { await fn(); } catch (e) { toast("Couldn't do that. You may not have permission."); } };
+    box.append(b);
+  };
+  const gid = grpId, mp = (f) => ref(db, "groups/" + gid + "/members/" + u + "/" + f);
+  if (me === "a") add(tr === "m" ? "Remove as moderator" : "Make moderator", () => set(mp("r"), tr === "m" ? "u" : "m"));
+  if (canMute) {
+    if (isMuted(grpMembers[u])) add("Unmute", () => remove(mp("mu")));
+    else {
+      add("Mute for 1 hour", () => set(mp("mu"), Date.now() + 3600000));
+      add("Mute for 1 day", () => set(mp("mu"), Date.now() + 86400000));
+      add("Mute until unmuted", () => set(mp("mu"), MUTE_FOR_EVER));
+    }
+  }
+  if (canRemove) add("Remove from group", async () => {
+    await remove(ref(db, "groups/" + gid + "/members/" + u));
+    try { await remove(ref(db, "userGroups/" + u + "/" + gid)); } catch (e) {}
+    toast("Removed.");
+  }, true);
+  const cancel = document.createElement("button"); cancel.type = "button"; cancel.textContent = "Cancel"; cancel.onclick = () => $("gActSheet").classList.remove("open"); box.append(cancel);
+  if (box.querySelectorAll("button").length <= 1) return;
+  $("gActSheet").classList.add("open");
+}
+$("gActSheet").onclick = (e) => { if (e.target.id === "gActSheet") $("gActSheet").classList.remove("open"); };
+// ---- leave / delete ----
+function askLeaveGroup() {
+  const gid = grpId; if (!gid) return;
+  askConfirm("Leave this group?", "You will stop getting its messages. An admin has to add you again if you want to come back.", "Leave", async () => {
+    grpLeaving = true;
+    try {
+      await remove(ref(db, "groups/" + gid + "/members/" + uid));
+      try { await remove(ref(db, "userGroups/" + uid + "/" + gid)); } catch (e) {}
+      delete grpList[gid]; delete grpCache[gid];
+      if (grpInfoOpen) { grpInfoOpen = false; }
+      leaveGroup(); toast("You left the group.");
+    } catch (e) { grpLeaving = false; toast("Couldn't leave. Check your connection."); }
+  });
+}
+$("giLeave").onclick = askLeaveGroup;
+$("giDelete").onclick = () => {
+  const gid = grpId; if (!gid || myRole() !== "a") return;
+  askConfirm("Delete this group?", "This deletes the group, every message and all photos and voice messages in it, for everybody. It cannot be undone.", "Delete group", async () => {
+    grpLeaving = true;
+    try {
+      try { await remove(ref(db, "groupMedia/" + gid)); } catch (e) {}
+      await remove(ref(db, "groups/" + gid));
+      try { await remove(ref(db, "userGroups/" + uid + "/" + gid)); } catch (e) {}
+      delete grpList[gid]; delete grpCache[gid];
+      leaveGroup(); toast("Group deleted.");
+    } catch (e) { grpLeaving = false; toast("Couldn't delete. Check your connection."); }
+  });
+};
+
 // ---- Block / unblock ----
 function askBlock(otherUid, name) {
   askConfirm(
@@ -2131,6 +2500,7 @@ $("usMsg").onclick = () => {
   const t = usTarget;
   closeUserSheet();
   $("sheet").classList.remove("open");
+  if (grpOpen) leaveGroup();
   if (t) openDm(t.uid, inRoom ? "chat" : "lobby");
 };
 $("usBlock").onclick = () => {
@@ -3104,7 +3474,17 @@ $("delConfirm").onclick = async () => {
     await remove(ref(db, "inbox/" + me));   // your chat list (the other person keeps their messages)
     await remove(ref(db, "blocks/" + me));
     await remove(ref(db, "profiles/" + me));
-    for (const n of ["stories", "storyViews", "storyHide", "storyIndex", "hidden"]) { try { await remove(ref(db, n + "/" + me)); } catch (e) {} }
+    try {   // leave my groups (and delete the ones I created)
+      const mine = (await get(ref(db, "userGroups/" + me))).val() || {};
+      for (const gid of Object.keys(mine)) {
+        try {
+          const role = (await get(ref(db, "groups/" + gid + "/members/" + me + "/r"))).val();
+          if (role === "a") { try { await remove(ref(db, "groupMedia/" + gid)); } catch (e) {} await remove(ref(db, "groups/" + gid)); }
+          else if (role) await remove(ref(db, "groups/" + gid + "/members/" + me));
+        } catch (e) {}
+      }
+    } catch (e) {}
+    for (const n of ["stories", "storyViews", "storyHide", "storyIndex", "hidden", "userGroups", "groupMake"]) { try { await remove(ref(db, n + "/" + me)); } catch (e) {} }
     try { await onDisconnect(ref(db, "presence/" + me)).cancel(); } catch (e) {}
     await remove(ref(db, "presence/" + me));
     await remove(ref(db, "names/" + key));
