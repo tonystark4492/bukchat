@@ -114,7 +114,7 @@
   .ct .n{font-weight:800;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ct .s{font-size:12px;color:var(--muted)}
   .pill{padding:8px 12px;border-radius:20px;background:var(--panel2);font-size:13px;color:var(--white);display:flex;align-items:center;gap:6px}
-  #msgs,#dmMsgs{flex:1;overflow-y:auto;overscroll-behavior:contain;contain:content;padding:14px 12px;display:flex;flex-direction:column;gap:8px;background:#0e0e0e}
+  #msgs,#dmMsgs,#gMsgs{flex:1;overflow-y:auto;overscroll-behavior:contain;contain:content;padding:14px 12px;display:flex;flex-direction:column;gap:8px;background:#0e0e0e}
   #dmMsgs .who{display:none}
   .sys{align-self:center;font-size:12px;color:var(--muted);padding:4px 12px;background:var(--panel);border-radius:12px}
   .msg{animation:msgIn .18s ease-out both;max-width:80%;padding:9px 13px 7px;border-radius:18px;word-wrap:break-word;overflow-wrap:anywhere;white-space:pre-wrap;line-height:1.35}
@@ -124,10 +124,10 @@
   .msg.other{align-self:flex-start;background:var(--panel2);border-bottom-left-radius:5px}
   .msg.mine{align-self:flex-end;background:var(--accent);color:#000;border-bottom-right-radius:5px}
   .msg.mine .who{display:none}
-  form#sendForm,form#dmForm{display:flex;align-items:flex-end;gap:10px;padding:10px 12px;border-top:1px solid var(--line);background:var(--panel)}
-  #msgInput,#dmInput{flex:1;min-width:0;display:block;resize:none;line-height:1.3;max-height:120px;overflow-y:auto;padding:13px 16px;border-radius:24px;border:2px solid var(--line);background:var(--panel2);color:var(--white);outline:none;font-size:16px}
-  #msgInput:focus,#dmInput:focus{border-color:var(--accent)}
-  #sendBtn,#dmSendBtn{width:48px;height:48px;border-radius:50%;background:var(--accent);color:#000;font-size:22px;font-weight:900}
+  form#sendForm,form#dmForm,form#gForm{display:flex;align-items:flex-end;gap:10px;padding:10px 12px;border-top:1px solid var(--line);background:var(--panel)}
+  #msgInput,#dmInput,#gInput{flex:1;min-width:0;display:block;resize:none;line-height:1.3;max-height:120px;overflow-y:auto;padding:13px 16px;border-radius:24px;border:2px solid var(--line);background:var(--panel2);color:var(--white);outline:none;font-size:16px}
+  #msgInput:focus,#dmInput:focus,#gInput:focus{border-color:var(--accent)}
+  #sendBtn,#dmSendBtn,#gSendBtn{width:48px;height:48px;border-radius:50%;background:var(--accent);color:#000;font-size:22px;font-weight:900}
 
   /* Members sheet */
   #sheet,#userSheet{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:flex-end;z-index:5}
@@ -218,11 +218,42 @@
   #ytView header button{color:var(--white);font-weight:800;padding:8px 10px;border-radius:10px;background:var(--panel2)}
   #ytFrame{flex:1;width:100%;border:0;background:#000}
 
+
+  /* Groups */
+  #gMutedBar{display:none;padding:12px 14px;border-top:1px solid var(--line);background:var(--panel);color:var(--muted);font-size:14px;text-align:center}
+  #gMutedBar.show{display:block}
+  .gNewBtn{width:100%;display:flex;align-items:center;gap:14px;padding:10px 12px;border-radius:16px;background:var(--panel);border:1px dashed var(--accent);color:var(--white);text-align:left;margin-bottom:14px;font-weight:800}
+  .gNewBtn .plus{width:42px;height:42px;border-radius:50%;background:var(--accent);color:#000;font-size:26px;display:grid;place-items:center;flex:none;line-height:1}
+  .gTag{display:inline-block;font-size:10px;font-weight:800;border-radius:8px;padding:2px 6px;margin-left:6px;background:var(--accent);color:#000;vertical-align:middle}
+  .gTag.mod{background:var(--panel2);color:var(--accent);border:1px solid var(--accent)}
+  .gTag.mute{background:#3a1a1a;color:#ff8a80}
+  #giBody{flex:1;overflow-y:auto;padding:18px 16px calc(24px + env(safe-area-inset-bottom))}
+  #giPic{width:96px;height:96px;font-size:40px;margin:0 auto 10px}
+  #giNameRow{display:flex;gap:10px;margin:8px 0 6px}
+  #giNameRow .field{text-align:left;padding:12px 14px;font-size:16px;flex:1;min-width:0}
+  #giNameRow button,.giBtn{padding:0 16px;border-radius:14px;background:var(--accent);color:#000;font-weight:800}
+  .giBtn{height:44px}
+  .giRow{display:flex;align-items:center;gap:12px;padding:12px 4px}
+  .giRow input{width:22px;height:22px;accent-color:var(--accent)}
+  .giChips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 4px}
+  .giChips button{padding:7px 12px;border-radius:16px;background:var(--panel2);color:var(--white);font-weight:700;font-size:13px;border:1px solid var(--line)}
+  .giMem{width:100%;display:flex;align-items:center;gap:12px;padding:10px 4px;border-bottom:1px solid var(--line);background:transparent;color:var(--white);text-align:left}
+  .giMem .av{width:42px;height:42px;font-size:17px;flex:none}
+  .giMem .nm{flex:1;min-width:0;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .giDanger{display:block;width:100%;margin-top:22px;padding:14px;border-radius:14px;background:var(--panel2);color:var(--danger);font-weight:800;font-size:16px}
+  #gNewSheet,#gActSheet{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:flex-end;justify-content:center;z-index:50}
+  #gNewSheet.open,#gActSheet.open{display:flex;animation:fadeIn .15s ease both}
+  #gNewSheet .field{text-align:left;font-size:16px;margin:4px 0 10px}
+  #gNewPic{width:64px;height:64px;font-size:26px;flex:none}
+  #gNewRow{display:flex;align-items:center;gap:12px;padding:0 4px 6px}
+  #gNewRow button{width:auto;padding:8px 12px;font-size:13px}
+  #giNameRow[hidden],#giAdmin[hidden],#giPicBtns[hidden],#giNameView[hidden],.giDanger[hidden],#gNewPicNo[hidden],#giPicRemove[hidden]{display:none!important}
+
   /* Photos and voice messages */
   .mBtn{width:44px;height:48px;flex:none;border-radius:50%;background:var(--panel2);color:var(--white);font-size:20px;display:grid;place-items:center}
   .mBtn.mic{width:48px;background:var(--accent);color:#000}
   form.hasText .mic{display:none}
-  form:not(.hasText) #sendBtn,form:not(.hasText) #dmSendBtn{display:none}
+  form:not(.hasText) #sendBtn,form:not(.hasText) #dmSendBtn,form:not(.hasText) #gSendBtn{display:none}
   form.rec>:not(.recBar){display:none!important}
   .recBar{flex:1;min-width:0;display:flex;align-items:center;gap:10px}
   .recBar .rbInfo{flex:1;min-width:0;display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px}
@@ -469,6 +500,10 @@
         <input class="field" id="dmSearchInput" maxlength="15" placeholder="Find a username to message" autocapitalize="off" spellcheck="false">
         <button type="submit" id="dmSearchBtn">Chat</button>
       </form>
+      <button class="gNewBtn" id="newGroupBtn" type="button"><span class="plus">+</span>New group</button>
+      <div class="label" id="grpLabel" hidden>GROUPS</div>
+      <div id="grpList"></div>
+      <div class="label" id="dmLabel" hidden style="margin-top:14px">PRIVATE CHATS</div>
       <div id="dmList"></div>
       <div class="emptyNote" id="dmEmpty">No private chats yet.<br>Type a username above, or tap a name inside a chat room, to say hi.</div>
     </div>
@@ -573,6 +608,57 @@
     <button class="mBtn mic" id="micBtn" type="button" aria-label="Record a voice message">🎤</button>
     <button id="sendBtn" type="submit" aria-label="Send">➤</button>
   </form>
+</section>
+
+
+<!-- Group chat -->
+<section class="screen" id="grp">
+  <header class="chatTop">
+    <button class="iconBtn" id="gBack" aria-label="Back">‹</button>
+    <div class="av" style="width:38px;height:38px;flex:none" id="gAv">?</div>
+    <div class="ct" id="gHead" style="cursor:pointer"><div class="n" id="gTitle">Group</div><div class="s" id="gSub">&nbsp;</div></div>
+    <button class="iconBtn" id="gMenuBtn" aria-label="Menu">⋮</button>
+  </header>
+  <div id="gMsgs"></div>
+  <div class="replyBar" id="gReplyBar" hidden><div class="rbq"><b></b><span></span></div><button class="rbx" type="button" aria-label="Cancel reply">✕</button></div>
+  <div id="gMutedBar"></div>
+  <form id="gForm" autocomplete="off">
+    <button class="mBtn" id="gImgBtn" type="button" aria-label="Send a photo">🖼</button>
+    <textarea id="gInput" rows="1" placeholder="Type a message" maxlength="500" enterkeyhint="enter" autocomplete="off"></textarea>
+    <button class="mBtn mic" id="gMicBtn" type="button" aria-label="Record a voice message">🎤</button>
+    <button id="gSendBtn" type="submit" aria-label="Send">➤</button>
+  </form>
+</section>
+
+<!-- Group info -->
+<section class="screen" id="ginfo">
+  <header class="chatTop">
+    <button class="iconBtn" id="giBack" aria-label="Back">‹</button>
+    <div class="ct"><div class="n">Group info</div></div>
+  </header>
+  <div id="giBody">
+    <div class="av" id="giPic">?</div>
+    <div id="giPicBtns" style="text-align:center;margin-bottom:6px" hidden>
+      <button class="smallBtn orange" id="giPicChange" type="button">Change picture</button>
+      <button class="smallBtn" id="giPicRemove" type="button">Remove</button>
+    </div>
+    <input type="file" id="gFile" accept="image/*" hidden>
+    <div id="giNameView" style="text-align:center;font-size:22px;font-weight:800;margin:6px 0"></div>
+    <form id="giNameRow" autocomplete="off" hidden><input class="field" id="giNameInput" maxlength="30" placeholder="Group name"><button type="submit">Save</button></form>
+    <div id="giAdmin" hidden>
+      <div class="label" style="margin-top:20px">ADD MEMBERS</div>
+      <form class="searchRow" id="giAddForm" autocomplete="off" style="margin-bottom:6px">
+        <input class="field" id="giAddInput" maxlength="15" placeholder="Username to add" autocapitalize="off" spellcheck="false">
+        <button type="submit" id="giAddBtn">Add</button>
+      </form>
+      <div class="giChips" id="giChips"></div>
+      <label class="giRow"><input type="checkbox" id="giMr"><span>Moderators can remove members</span></label>
+    </div>
+    <div class="label" id="giCount" style="margin-top:20px">MEMBERS</div>
+    <div id="giList"></div>
+    <button class="giDanger" id="giLeave" type="button">Leave group</button>
+    <button class="giDanger" id="giDelete" type="button" hidden>Delete group</button>
+  </div>
 </section>
 
 <!-- Photo preview before sending, and full-screen photo viewer -->
@@ -694,6 +780,12 @@
   <button id="lkNo" type="button">Cancel</button></div></div>
 <div id="ytView"><header><button id="ytX" type="button" aria-label="Close">✕</button><span>YouTube</span><button id="ytOpen" type="button">Open in YouTube ↗</button></header>
   <iframe id="ytFrame" title="YouTube video" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox"></iframe></div>
+<div id="gNewSheet"><div class="mmBox"><div class="mmPrev">New group</div>
+  <div id="gNewRow"><div class="av" id="gNewPic">+</div><button class="smallBtn orange" id="gNewPicBtn" type="button">Add picture</button><button class="smallBtn" id="gNewPicNo" type="button" hidden>Remove</button></div>
+  <input class="field" id="gNewName" maxlength="30" placeholder="Group name" autocomplete="off">
+  <button id="gNewOk" type="button" class="pri">Create group</button>
+  <button id="gNewNo" type="button">Cancel</button></div></div>
+<div id="gActSheet"><div class="mmBox" id="gActBox"></div></div>
 <div id="toast"></div>
 
 <script type="module" src="app.js"></script>
