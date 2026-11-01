@@ -1928,7 +1928,7 @@ function stRow(u, name, list, mine) {
   const b = document.createElement("button");
   b.className = "stItem"; b.type = "button";
   const ring = document.createElement("div");
-  ring.className = "ring" + (list.every((e) => seenSt[e.sid]) ? " seen" : "");
+  ring.className = "stRing" + (list.every((e) => seenSt[e.sid]) ? " seen" : "");
   const av = document.createElement("div"); av.className = "av"; av.textContent = (name[0] || "?").toUpperCase();
   paintAv(av, u, name);
   ring.append(av);
