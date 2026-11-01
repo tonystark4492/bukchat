@@ -180,6 +180,38 @@
   #delConfirm:disabled,#clearOk:disabled{opacity:.4}
   .msg .tick{letter-spacing:0}
 
+  /* Photos and voice messages */
+  .mBtn{width:44px;height:48px;flex:none;border-radius:50%;background:var(--panel2);color:var(--white);font-size:20px;display:grid;place-items:center}
+  .mBtn.mic{width:48px;background:var(--accent);color:#000}
+  form.hasText .mic{display:none}
+  form:not(.hasText) #sendBtn,form:not(.hasText) #dmSendBtn{display:none}
+  form.rec>:not(.recBar){display:none!important}
+  .recBar{flex:1;min-width:0;display:flex;align-items:center;gap:10px}
+  .recBar .rbInfo{flex:1;min-width:0;display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px}
+  .recBar .dot{width:11px;height:11px;border-radius:50%;background:#ff3b30;animation:recPulse 1s infinite}
+  @keyframes recPulse{50%{opacity:.25}}
+  .recBar .mAud{flex:1;background:var(--panel2);border-radius:24px;padding:6px 12px 6px 6px}
+  .msg.media{padding:5px 5px 6px;white-space:normal}
+  .msg.media .tm{padding:0 6px}
+  .mImg{position:relative;width:min(240px,62vw);max-height:340px;border-radius:13px;overflow:hidden;background:rgba(128,128,128,.28);display:grid;place-items:center;cursor:pointer}
+  .mImg img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+  .mImg .mNote{font-size:13px;font-weight:700;opacity:.75;padding:8px;text-align:center}
+  .mAud{display:flex;align-items:center;gap:9px;min-width:190px;width:min(250px,64vw)}
+  .mAud .mPlay{width:38px;height:38px;flex:none;border-radius:50%;background:#000;color:var(--accent);font-size:15px;display:grid;place-items:center}
+  .msg.mine .mAud .mPlay{background:#000;color:#fff}
+  .mAud .mBar{flex:1;height:5px;border-radius:3px;background:rgba(128,128,128,.4);overflow:hidden}
+  .mAud .mBar i{display:block;height:100%;width:0;background:var(--accent)}
+  .msg.mine .mAud .mBar i{background:#000}
+  .mAud .mTime{font-size:12px;font-weight:700;min-width:34px;text-align:right;font-variant-numeric:tabular-nums}
+  #imgPrev,#imgView{position:fixed;inset:0;z-index:70;display:none;flex-direction:column;background:rgba(0,0,0,.94)}
+  #imgPrev.open,#imgView.open{display:flex}
+  #imgPrev .pv{flex:1;min-height:0;display:grid;place-items:center;padding:16px}
+  #imgPrev img,#imgView img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px}
+  #imgPrev .acts{display:flex;gap:12px;padding:14px 16px calc(14px + env(safe-area-inset-bottom))}
+  #imgPrev .acts button{flex:1;height:50px;border-radius:25px;font-size:16px;font-weight:800;background:var(--panel2);color:var(--white)}
+  #imgPrev .acts button.orange{background:var(--accent);color:#000}
+  #imgView .pv{flex:1;min-height:0;display:grid;place-items:center}
+  #imgView .x{position:absolute;top:calc(10px + env(safe-area-inset-top));right:12px;width:44px;height:44px;border-radius:50%;background:rgba(0,0,0,.6);color:#fff;font-size:22px}
   #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%) translateY(20px);background:#222;border:1px solid var(--accent);
     color:var(--white);padding:12px 18px;border-radius:14px;font-size:14px;opacity:0;pointer-events:none;transition:.25s;z-index:10;max-width:88%;text-align:center}
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
@@ -479,7 +511,9 @@
   <div id="dmMsgs"></div>
   <div id="dmBlockedBar"><span id="dmBlockedText"></span><button class="smallBtn orange" id="dmUnblockBtn">Unblock</button></div>
   <form id="dmForm" autocomplete="off">
+    <button class="mBtn" id="dmImgBtn" type="button" aria-label="Send a photo">🖼</button>
     <textarea id="dmInput" rows="1" placeholder="Type a message" maxlength="500" enterkeyhint="enter" autocomplete="off"></textarea>
+    <button class="mBtn mic" id="dmMicBtn" type="button" aria-label="Record a voice message">🎤</button>
     <button id="dmSendBtn" type="submit" aria-label="Send">➤</button>
   </form>
 </section>
@@ -494,10 +528,18 @@
   </header>
   <div id="msgs"></div>
   <form id="sendForm" autocomplete="off">
+    <button class="mBtn" id="imgBtn" type="button" aria-label="Send a photo">🖼</button>
     <textarea id="msgInput" rows="1" placeholder="Type a message" maxlength="500" enterkeyhint="enter" autocomplete="off"></textarea>
+    <button class="mBtn mic" id="micBtn" type="button" aria-label="Record a voice message">🎤</button>
     <button id="sendBtn" type="submit" aria-label="Send">➤</button>
   </form>
 </section>
+
+<!-- Photo preview before sending, and full-screen photo viewer -->
+<div id="imgPrev"><div class="pv"><img id="imgPrevImg" alt="Photo preview"></div>
+  <div class="acts"><button id="imgPrevNo" type="button">Cancel</button><button class="orange" id="imgPrevYes" type="button">Send ➤</button></div></div>
+<div id="imgView"><button class="x" id="imgViewX" type="button" aria-label="Close">✕</button><div class="pv" id="imgViewPv"><img id="imgViewImg" alt="Photo"></div></div>
+<input type="file" id="imgFile" accept="image/*" hidden>
 
 <!-- 5. Settings -->
 <section class="screen" id="profile">
