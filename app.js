@@ -553,6 +553,7 @@ function openChat(membership) {
     set(ref(db, ROOM + "/members/" + uid + "/greeted"), true).catch(() => {});
   }
 
+  unsubs.push(rcWatch("msgs", ROOM + "/rc", "any"));
   unsubs.push(onValue(ref(db, ROOM + "/slots"), (snap) => {
     slotUids = snap.exists() ? Object.values(snap.val()) : [];
     $("memCount").textContent = slotUids.length + "/" + MAX_MEMBERS;
@@ -697,15 +698,68 @@ function buildMessage(m, key, sc) {
   tm.textContent = m.ts ? fmtTime(m.ts) : "";
   if (mine) {
     // 🕓 = still sending, ✓ = the server has it
-    const tick = document.createElement("span");
-    tick.className = "tick";
-    tick.textContent = pendingKeys.has(key) ? " 🕓" : " ✓";
-    tm.append(tick);
+    tm.append(tickSpan(pendingKeys.has(key)));
   }
+  if (m.ts) d.dataset.ts = m.ts;
+  if (!mine && m.uid && m.ts) rcIncoming((rScope.t === "g" ? "groups/" + rScope.id : rScope.id) + "/rc/" + uid, Number(m.ts), rScope.t === "g" ? "gMsgs" : "msgs");
+  schedTicks();
   if (typeof m.rt === "string" && m.rt) d.append(who, quoteEl(m, rScope), body, tm); else d.append(who, body, tm);
   decorateMsg(d, m, key, rScope, mine, m.uid, m.name);
   return d;
 }
+
+// ---------- Delivered / seen ticks ----------
+// ✓ sent · ✓✓ delivered (grey) · ✓✓ seen (red). Each chat keeps a tiny receipt for every person at <chat>/rc/<who>
+// = {d, s}: the server time when they last received / looked at messages. A message of mine is "delivered" or
+// "seen" when the other person's receipt is newer than the message. Rooms: any one other member is enough.
+// Groups: every other member. Receipts are only written while the app is open.
+const RC = {};            // box id -> (ts) => 0 sent | 1 delivered | 2 seen
+const rcVal = {};         // box id -> latest receipts
+const RC_CALC = {
+  any: (v, ts) => { let st = 0; for (const u in v) { if (u === uid || !v[u]) continue; if (Number(v[u].s) >= ts) return 2; if (Number(v[u].d) >= ts) st = 1; } return st; },
+  all: (v, ts) => { const o = Object.keys(grpMembers).filter((u) => u !== uid); if (!o.length) return 0; let sn = true, dl = true;
+    for (const u of o) { const x = v[u] || {}; if (!(Number(x.s) >= ts)) sn = false; if (!(Number(x.d) >= ts)) dl = false; } return sn ? 2 : dl ? 1 : 0; },
+  dm: (v, ts) => { const x = v[dmOther] || {}; return Number(x.s) >= ts ? 2 : Number(x.d) >= ts ? 1 : 0; },
+  qc: (v, ts) => { const x = v[QC.partnerRole] || {}; return Number(x.s) >= ts ? 2 : Number(x.d) >= ts ? 1 : 0; }
+};
+function paintTick(el) {
+  const t = el.querySelector(".tick"); if (!t) return;
+  if (el.dataset.key && pendingKeys.has(el.dataset.key)) return;          // 🕓 stays until the server has it
+  const box = el.parentElement, f = box && RC[box.id];
+  const st = f ? f(Number(el.dataset.ts) || 0) : 0;
+  t.textContent = st ? " ✓✓" : " ✓"; t.classList.toggle("seen", st === 2);
+  t.setAttribute("aria-label", st === 2 ? "Seen" : st === 1 ? "Delivered" : "Sent");
+}
+let tkQ = 0;
+function schedTicks() {
+  if (tkQ) return;
+  tkQ = setTimeout(() => { tkQ = 0; Object.keys(RC).forEach((id) => document.querySelectorAll("#" + id + " .msg.mine").forEach(paintTick)); }, 40);
+}
+function rcWatch(boxId, path, mode) {
+  rcVal[boxId] = {}; RC[boxId] = (ts) => RC_CALC[mode](rcVal[boxId] || {}, ts);
+  const off = onValue(ref(db, path), (snap) => { rcVal[boxId] = snap.val() || {}; schedTicks(); }, () => {});
+  return () => { try { off(); } catch (e) {} delete RC[boxId]; delete rcVal[boxId]; };
+}
+const rcW = {};           // my receipt path -> what I already wrote
+function rcIncoming(path, ts, boxId) {
+  if (!uid || !path || !(ts > 0)) return;
+  const w = rcW[path] || (rcW[path] = { newest: 0, dl: 0, sn: 0, timer: 0, box: null });
+  if (ts > w.newest) w.newest = ts;
+  if (boxId) w.box = boxId;
+  rcFlushSoon(path);
+}
+function rcFlushSoon(path) { const w = rcW[path]; if (!w || w.timer) return; w.timer = setTimeout(() => { w.timer = 0; rcFlush(path); }, 600); }
+function rcFlush(path) {
+  const w = rcW[path]; if (!w || !w.newest || !uid) return;
+  const b = w.box && $(w.box), looking = !document.hidden && b && b.offsetParent !== null;
+  const u = {};
+  if (looking && w.newest > w.sn) { u[path + "/d"] = serverTimestamp(); u[path + "/s"] = serverTimestamp(); w.sn = w.dl = w.newest; }
+  else if (w.newest > w.dl) { u[path + "/d"] = serverTimestamp(); w.dl = w.newest; }
+  else return;
+  update(ref(db), u).catch(() => { w.sn = w.dl = 0; });
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) Object.keys(rcW).forEach(rcFlushSoon); });
+function tickSpan(pending) { const t = document.createElement("span"); t.className = "tick"; t.textContent = pending ? " 🕓" : " ✓"; return t; }
 
 // ---------- Send sound (made in code, no sound file needed) ----------
 let soundEnabled = true;
@@ -755,8 +809,7 @@ $("sendForm").addEventListener("submit", async (e) => {
   try {
     await set(msgRef, Object.assign({ uid, name: myName, text, ts: serverTimestamp() }, rx));
     pendingKeys.delete(key);
-    const t = document.querySelector('.msg[data-key="' + key + '"] .tick');
-    if (t) t.textContent = " ✓";
+    schedTicks();
   } catch (err) {
     pendingKeys.delete(key);
     msgQueue = msgQueue.filter((x) => x[1] !== key);
@@ -1297,6 +1350,7 @@ function startPrivateListeners() {
         const e = next[c], was = inboxCache[c];
         if ((Number(e.n) || 0) > ((was && Number(was.n)) || 0) && e.with &&
             e.from !== uid && !blocksCache[e.with]) {
+          rcIncoming("dms/" + c + "/rc/" + uid, Number(e.ts) || Date.now());
           getName(e.with).then((nm) => notifyIncoming({ kind: "dm", key: c, from: e.with, name: nm || "Someone", text: e.last || "New message" }));
         }
       }
@@ -1444,7 +1498,8 @@ async function openDm(other, from) {
   const offA = onChildAdded(q, (snap) => addDmMessage(snap.val(), snap.key),
     () => { if (dmConvId === conv) toast("Can't open this chat right now."); });
   const offR = onChildRemoved(q, (snap) => { if (dmConvId === conv) removeMsgEl({ t: "d", id: conv }, snap.key); });
-  dmOff = () => { offA(); offR(); };
+  const offRc = rcWatch("dmMsgs", "dms/" + conv + "/rc", "dm");
+  dmOff = () => { offA(); offR(); offRc(); };
   startTypingWatch();
   markDmSeen();
   if (!blocksCache[other]) setTimeout(() => { if (dmOpen) $("dmInput").focus(); }, 250);
@@ -1479,11 +1534,11 @@ function addDmMessage(m, key) {
   tm.className = "tm";
   tm.textContent = m.ts ? fmtTime(m.ts) : "";
   if (mine) {
-    const tick = document.createElement("span");
-    tick.className = "tick";
-    tick.textContent = pendingKeys.has(key) ? " 🕓" : " ✓";
-    tm.append(tick);
+    tm.append(tickSpan(pendingKeys.has(key)));
   }
+  if (m.ts) d.dataset.ts = m.ts;
+  if (!mine && m.ts) rcIncoming("dms/" + dmConvId + "/rc/" + uid, Number(m.ts), "dmMsgs");
+  schedTicks();
   if (typeof m.rt === "string" && m.rt) d.append(quoteEl(m, dScope), body, tm); else d.append(body, tm);
   decorateMsg(d, m, key, dScope, mine, m.from, mine ? myName : dmName);
   box.append(d);
@@ -1544,8 +1599,7 @@ $("dmForm").addEventListener("submit", async (e) => {
   const ok = await dmWrite(conv, other, key, text, takeReply({ t: "d", id: conv }));
   pendingKeys.delete(key);
   if (ok) {
-    const t = document.querySelector('#dmMsgs .msg[data-key="' + key + '"] .tick');
-    if (t) t.textContent = " ✓";
+    schedTicks();
   } else {
     delete sentLocal[conv];
     const el = document.querySelector('#dmMsgs .msg[data-key="' + key + '"]');
@@ -1808,7 +1862,7 @@ function decorateMsg(d, m, key, scope, mine, who, name) {
 // The chat message itself stays tiny ("📷 Photo" + size info). The picture / sound is saved
 // separately (roomMedia/... or dmMedia/...) and is only downloaded when it is on screen
 // (photos) or when someone taps play (voice). Media is removed after 7 days.
-const MEDIA_LIFE = 7 * 86400000, VOICE_MAX = 45;
+const MEDIA_LIFE = 7 * 86400000, VOICE_MAX = 40;
 let ignorePops = 0;
 const mediaCache = new Map();               // "r<room>/<key>" -> data URL (newest 24 only)
 function mcKey(scope, key) { return scope.t + scope.id + "/" + key; }
@@ -1996,7 +2050,7 @@ async function sendMedia(scope, kind, data, meta) {
   }
   pendingKeys.delete(key);
   const sel = "#" + boxOf(scope).id + ' .msg[data-key="' + key + '"]';
-  if (ok) { const t = document.querySelector(sel + " .tick"); if (t) t.textContent = " ✓"; }
+  if (ok) schedTicks();
   else {
     msgQueue = msgQueue.filter((x) => x[1] !== key);
     const el = document.querySelector(sel); if (el) el.remove();
@@ -2006,29 +2060,72 @@ async function sendMedia(scope, kind, data, meta) {
 }
 
 // ---- Recording ----
+// Only one recording can exist. `rec` is claimed synchronously on the first tap (before the mic permission
+// await), so a double-tap can never start two recordings.
 let rec = null;
 function setRecUI(r, html) { r.bar.innerHTML = ""; r.bar.append(html); }
 function micBtns() { return [["micBtn", "sendForm"], ["dmMicBtn", "dmForm"], ["gMicBtn", "gForm"]]; }
-micBtns().forEach(([bid, fid]) => { $(bid).onclick = () => { const sc = chatScope(); if (sc) startRec($(fid), sc); }; });
+function lockMics(on) { micBtns().forEach(([bid]) => { const b = $(bid); if (b) b.disabled = !!on; }); }
+let micLockUntil = 0;       // right after a recording ends, a second tap of the same spot must not start a new one
+micBtns().forEach(([bid, fid]) => { $(bid).onclick = () => { if (rec || Date.now() < micLockUntil) return; const sc = chatScope(); if (sc) startRec($(fid), sc); }; });
 function mkBtn(txt, cls, fn, label) {
-  const b = document.createElement("button"); b.type = "button"; b.className = "mBtn " + (cls || ""); b.textContent = txt; b.onclick = fn;
+  const b = document.createElement("button"); b.type = "button"; b.className = "mBtn " + (cls || ""); b.textContent = txt;
+  let busy = false;
+  b.onclick = (ev) => { if (busy) return; busy = true; setTimeout(() => { busy = false; }, 350); fn(ev); };
   if (label) b.setAttribute("aria-label", label); return b;
+}
+function freeRecAudio(r) {
+  try { r.stream && r.stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+  try { r.raw && r.raw.getTracks().forEach((t) => t.stop()); } catch (e) {}
+  try { r.ac && r.ac.state !== "closed" && r.ac.close(); } catch (e) {}
+}
+// Clean-up chain: high-pass (cuts rumble/hum) -> gentle compressor -> gain (louder, more even voice).
+// If anything is unsupported we silently use the plain microphone stream.
+function enhanceStream(raw, r) {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return raw;
+    const ac = new AC(); r.ac = ac;
+    const src = ac.createMediaStreamSource(raw);
+    const hp = ac.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 90;
+    const comp = ac.createDynamicsCompressor();
+    comp.threshold.value = -28; comp.knee.value = 24; comp.ratio.value = 4; comp.attack.value = 0.005; comp.release.value = 0.2;
+    const gain = ac.createGain(); gain.gain.value = 1.6;
+    const dest = ac.createMediaStreamDestination();
+    src.connect(hp); hp.connect(comp); comp.connect(gain); gain.connect(dest);
+    if (ac.state === "suspended") ac.resume().catch(() => {});
+    return dest.stream;
+  } catch (e) { try { r.ac && r.ac.close(); } catch (_) {} r.ac = null; return raw; }
 }
 async function startRec(form, scope) {
   if (rec) return;
-  if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) || typeof MediaRecorder === "undefined") { toast("Voice messages aren't supported on this device."); return; }
-  let stream;
-  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
-  catch (e) { toast("Allow the microphone to record voice messages."); return; }
+  const r = rec = { form, scope, state: "starting", chunks: [], t0: 0, timer: 0, data: null, dur: 0, bar: null, cancelled: false };
+  lockMics(true);
+  const fail = (m) => { if (m) toast(m); if (rec === r) cancelRec(); };
+  if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) || typeof MediaRecorder === "undefined") return fail("Voice messages aren't supported on this device.");
+  stopAllAudio();
+  const bar = r.bar = document.createElement("div"); bar.className = "recBar"; form.append(bar); form.classList.add("rec");
+  const w0 = document.createElement("div"); w0.className = "recBar"; w0.style.cssText = "flex:1;display:flex;align-items:center;gap:10px";
+  const i0 = document.createElement("div"); i0.className = "rbInfo"; i0.textContent = "Starting microphone…";
+  w0.append(mkBtn("✕", "", () => cancelRec(), "Cancel recording"), i0); setRecUI(r, w0);
+  let raw;
+  const wanted = { channelCount: 1, sampleRate: 48000, echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  try { raw = await navigator.mediaDevices.getUserMedia({ audio: wanted }); }
+  catch (e) {
+    if (e && (e.name === "NotAllowedError" || e.name === "SecurityError" || e.name === "NotFoundError")) return fail(e.name === "NotFoundError" ? "No microphone found." : "Allow the microphone to record voice messages.");
+    try { raw = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e2) { return fail("Allow the microphone to record voice messages."); }
+  }
+  if (rec !== r || r.cancelled) { try { raw.getTracks().forEach((t) => t.stop()); } catch (e) {} return; }
+  r.raw = raw; r.stream = enhanceStream(raw, r);
   const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"].find((t) => MediaRecorder.isTypeSupported(t)) || "";
   let mr;
-  try { mr = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 24000 } : { audioBitsPerSecond: 24000 }); }
-  catch (e) { stream.getTracks().forEach((t) => t.stop()); toast("Voice messages aren't supported on this device."); return; }
-  stopAllAudio();
-  const bar = document.createElement("div"); bar.className = "recBar"; form.append(bar); form.classList.add("rec");
-  const r = rec = { form, scope, mr, stream, bar, chunks: [], t0: Date.now(), timer: 0, state: "rec", mime: (mr.mimeType || mime || "audio/webm"), data: null, dur: 0 };
+  try { mr = new MediaRecorder(r.stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : { audioBitsPerSecond: 32000 }); }
+  catch (e) {
+    try { mr = new MediaRecorder(raw); r.stream = raw; } catch (e2) { return fail("Voice messages aren't supported on this device."); }
+  }
+  r.mr = mr; r.mime = mr.mimeType || mime || "audio/webm";
   mr.ondataavailable = (e) => { if (e.data && e.data.size) r.chunks.push(e.data); };
   mr.onstop = () => finishRec(r);
+  mr.onerror = () => { if (rec === r && r.state === "rec") fail("Recording failed. Please try again."); };
   const wrap = document.createElement("div"); wrap.className = "recBar"; wrap.style.cssText = "flex:1;display:flex;align-items:center;gap:10px";
   const info = document.createElement("div"); info.className = "rbInfo";
   const dot = document.createElement("span"); dot.className = "dot";
@@ -2037,7 +2134,8 @@ async function startRec(form, scope) {
   info.append(dot, tm, hint);
   wrap.append(mkBtn("✕", "", () => cancelRec(), "Cancel recording"), info, mkBtn("■", "mic", () => stopRec(), "Stop recording"));
   setRecUI(r, wrap);
-  mr.start();
+  try { mr.start(); } catch (e) { return fail("Recording failed. Please try again."); }
+  r.state = "rec"; r.t0 = Date.now();
   r.timer = setInterval(() => {
     const s = (Date.now() - r.t0) / 1000;
     tm.textContent = fmtDur(s);
@@ -2048,21 +2146,25 @@ function stopRec() {
   const r = rec; if (!r || r.state !== "rec") return;
   r.state = "stopping"; clearInterval(r.timer);
   r.dur = (Date.now() - r.t0) / 1000;
-  try { if (r.mr.state !== "inactive") r.mr.stop(); } catch (e) {}
-  r.stream.getTracks().forEach((t) => t.stop());
+  try { if (r.mr.state !== "inactive") r.mr.stop(); else finishRec(r); } catch (e) { finishRec(r); }
+  setTimeout(() => { if (rec === r && r.state === "stopping") finishRec(r); }, 2500); // safety net if onstop never fires
 }
 function cancelRec() {
   const r = rec; if (!r) return;
   r.cancelled = true; rec = null; clearInterval(r.timer);
-  try { if (r.mr.state !== "inactive") r.mr.stop(); } catch (e) {}
-  r.stream.getTracks().forEach((t) => t.stop());
-  r.bar.remove(); r.form.classList.remove("rec");
+  try { if (r.mr && r.mr.state !== "inactive") r.mr.stop(); } catch (e) {}
+  freeRecAudio(r);
+  if (r.bar) r.bar.remove(); r.form.classList.remove("rec");
+  micLockUntil = Date.now() + 600; lockMics(true);
+  setTimeout(() => { if (!rec) lockMics(false); }, 620);
 }
 function finishRec(r) {
-  if (r.cancelled || rec !== r) return;
+  if (r.cancelled || rec !== r || r.state === "ready" || r.finishing) return;
+  r.finishing = true; freeRecAudio(r);
   if (r.dur < 1) { toast("Too short. Hold on a little longer."); cancelRec(); return; }
   const base = String(r.mime).split(";")[0].toLowerCase();
   if (!/^audio\/(webm|ogg|mp4|aac)$/.test(base)) { toast("Voice messages aren't supported on this device."); cancelRec(); return; }
+  if (!r.chunks.length) { toast("Nothing was recorded. Please try again."); cancelRec(); return; }
   const fr = new FileReader();
   fr.onload = () => {
     if (rec !== r) return;
@@ -2072,9 +2174,12 @@ function finishRec(r) {
     r.state = "ready";
     const wrap = document.createElement("div"); wrap.className = "recBar";
     const pl = audioBody(Math.ceil(r.dur), async () => r.data);
-    const send = mkBtn("➤", "mic", async () => {
+    let sent = false; const readyAt = Date.now();
+    const send = mkBtn("➤", "mic", () => {
+      if (sent || rec !== r || Date.now() - readyAt < 700) return;      // a double-tap on Stop must not send by accident
       const sc = r.scope;
       if (sc.t === "d" && blocksCache[sc.other]) { toast("Unblock this user to send messages."); return; }
+      sent = true;
       const d = r.data, dur = Math.ceil(r.dur);
       cancelRec();
       sendMedia(sc, "a", d, { d: Math.max(1, Math.min(61, dur)) });
@@ -2120,6 +2225,7 @@ async function refreshGroups(force) {
   }));
   ids.forEach((gid) => {
     const c = grpCache[gid];
+    if (c && c.last && Number(c.last.ts) > 0 && c.last.n !== myName) rcIncoming("groups/" + gid + "/rc/" + uid, Number(c.last.ts));
     if (c && c.gone) { remove(ref(db, "userGroups/" + uid + "/" + gid)).catch(() => {}); delete grpCache[gid]; delete grpList[gid]; }
   });
   renderGroups();
@@ -2215,6 +2321,7 @@ function openGroup(gid) {
     grpMeta = s.val(); grpCache[gid] = Object.assign(grpCache[gid] || { t: Date.now() }, { meta: grpMeta });
     paintGroupHead(); if (grpInfoOpen) renderGroupInfo();
   }, () => gone("You were removed from this group, or it was deleted.")));
+  grpOffs.push(rcWatch("gMsgs", "groups/" + gid + "/rc", "all"));
   grpOffs.push(onValue(ref(db, "groups/" + gid + "/members"), (s) => {
     if (grpId !== gid) return;
     const v = s.val() || {}, had = grpReady;
@@ -2277,7 +2384,7 @@ $("gForm").addEventListener("submit", async (e) => {
   try {
     await update(ref(db), u);
     pendingKeys.delete(key);
-    const t = document.querySelector('#gMsgs .msg[data-key="' + key + '"] .tick'); if (t) t.textContent = " ✓";
+    schedTicks();
   } catch (err) {
     pendingKeys.delete(key);
     const el = document.querySelector('#gMsgs .msg[data-key="' + key + '"]'); if (el) el.remove();
@@ -2441,7 +2548,7 @@ $("giDelete").onclick = () => {
 // (qcMe/<me>); only the database rules can turn an alias back into an account. Two people are
 // paired by one all-or-nothing database write, so nobody can be matched twice.
 const QC_REPEAT_MS = 120000, QC_FRESH_MS = 240000, QC_STALE_SESSION = 6 * 3600000;
-const QC = { alias: null, state: "idle", sid: null, role: 0, partner: null, searchOffs: [], chatOffs: [], scanTimer: 0, scanning: false,
+const QC = { alias: null, state: "idle", sid: null, role: 0, partner: null, searchOffs: [], chatOffs: [], scanTimer: 0, scanning: 0, startTk: 0, startAt: 0,
   ended: false, blocked: {}, log: [], seen: new Set(), partnerOn: false, offlineTimer: 0, fr: {}, revealed: null, greeted: false, token: 0, myReveal: false };
 let qcOpen = false;
 const qcRand = (n) => { const a = new Uint8Array(n); crypto.getRandomValues(a); return Array.from(a, (x) => "abcdefghijklmnopqrstuvwxyz0123456789"[x % 36]).join(""); };
@@ -2488,24 +2595,36 @@ async function qcLoadBlocks() {
 
 // ---- start / resume ----
 async function startQuick() {
-  if (QC.state !== "idle" || !uid) return;
-  QC.state = "starting";
-  const btn = $("qcStartBtn"); btn.disabled = true;
+  if (!uid) return;
+  // self-healing guard: a stuck/stale state can never block the Start button for long
+  if (QC.state === "starting" && Date.now() - QC.startAt < 10000) return;
+  if (qcOpen && (QC.state === "searching" || QC.state === "chat")) return;
+  if (QC.state === "chat" && QC.sid) { qcOpenScreen(); return; }
+  if (QC.state === "searching") qcCancelSearch();
+  QC.state = "starting"; QC.startAt = Date.now(); const my = ++QC.startTk;
+  const dead = () => QC.startTk !== my || QC.state !== "starting";
+  qcOpenScreen();                                  // show the screen at once: no waiting on the network
+  $("qcTitle").textContent = "Quick Chat"; $("qcSub").textContent = "Connecting…"; $("qcAv").textContent = "⚡";
+  qcShow("search");
   try {
-    const alias = await qcGetAlias();
-    await qcLoadBlocks();
-    const act = (await get(ref(db, "qcActive/" + alias))).val();
+    const alias = await withTimeout(qcGetAlias(), 10000);
+    if (dead()) return;
+    const [, act] = await withTimeout(Promise.all([qcLoadBlocks(), get(ref(db, "qcActive/" + alias)).then((x) => x.val())]), 10000);
+    if (dead()) return;
     if (act) {                                     // only one session per person: go back to it if it is still alive
-      const sd = (await get(ref(db, "qcSessions/" + act))).val();
-      if (sd && Date.now() - (Number(sd.ts) || 0) < QC_STALE_SESSION && !sd.end) { qcOpenScreen(); await qcJoin(act); return; }
+      const sd = (await withTimeout(get(ref(db, "qcSessions/" + act)), 10000)).val();
+      if (dead()) return;
+      if (sd && Date.now() - (Number(sd.ts) || 0) < QC_STALE_SESSION && !sd.end) { await qcJoin(act); return; }
       await qcDropSession(act, sd, alias);
+      if (dead()) return;
     }
-    qcOpenScreen();
     await qcSearch();
   } catch (e) {
-    QC.state = "idle"; toast("Couldn't start Quick Chat. Check your connection and try again.");
-    if (qcOpen) qcCloseScreen();
-  } finally { btn.disabled = false; }
+    if (QC.startTk === my) {
+      QC.state = "idle"; toast("Couldn't start Quick Chat. Check your connection and try again.");
+      if (qcOpen) qcCloseScreen();
+    }
+  }
 }
 $("qcStartBtn").onclick = startQuick;
 async function qcDropSession(sid, sd, alias) {
@@ -2522,10 +2641,11 @@ async function qcSearch() {
   qcShow("search");
   const alias = QC.alias, qref = ref(db, "qcQueue/" + alias);
   try {
-    await set(qref, { ts: serverTimestamp() });
+    await withTimeout(set(qref, { ts: serverTimestamp() }), 10000);
     onDisconnect(qref).remove().catch(() => {});
   } catch (e) { QC.state = "idle"; toast("Couldn't join the queue. Try again."); qcCloseScreen(); return; }
   if (tk !== QC.token) return;
+  $("qcSub").textContent = "Searching…";
   QC.searchOffs.push(onValue(ref(db, "qcActive/" + alias), (snap) => {      // someone paired with me
     const sid = snap.val();
     if (sid && QC.state === "searching" && tk === QC.token) qcJoin(sid);
@@ -2534,11 +2654,11 @@ async function qcSearch() {
   qcScan(tk);
 }
 async function qcScan(tk) {
-  if (QC.state !== "searching" || tk !== QC.token || QC.scanning) return;
-  QC.scanning = true;
+  if (QC.state !== "searching" || tk !== QC.token || QC.scanning === tk) return;
+  QC.scanning = tk;
   try {
     const q = query(ref(db, "qcQueue"), orderByChild("ts"), limitToFirst(25));
-    const v = (await get(q)).val() || {}, now = Date.now();
+    const v = (await withTimeout(get(q), 8000)).val() || {}, now = Date.now();
     const c = Object.entries(v)
       .filter(([k, x]) => k !== QC.alias && x && typeof x.ts === "number" && now - x.ts < QC_FRESH_MS && !qcIsRecent(k) && !QC.blocked[k])
       .sort((a, b) => a[1].ts - b[1].ts).slice(0, 6);
@@ -2546,7 +2666,7 @@ async function qcScan(tk) {
       if (QC.state !== "searching" || tk !== QC.token) break;
       if (await qcClaim(k, tk)) break;
     }
-  } catch (e) {} finally { QC.scanning = false; }
+  } catch (e) {} finally { if (QC.scanning === tk) QC.scanning = 0; }
 }
 // 1) write a pending session, 2) take both "active" slots in one all-or-nothing write
 async function qcClaim(b, tk) {
@@ -2563,7 +2683,7 @@ async function qcClaim(b, tk) {
 }
 function qcCancelSearch() {
   const alias = QC.alias;
-  QC.token++; qcDetachSearch();
+  QC.token++; QC.startTk++; qcDetachSearch();
   if (alias) { const r = ref(db, "qcQueue/" + alias); onDisconnect(r).cancel().catch(() => {}); remove(r).catch(() => {}); }
   QC.state = "idle";
 }
@@ -2587,6 +2707,7 @@ async function qcJoin(sid) {
   qcSys("You're now chatting with Stranger " + QC.partnerRole + ". Say hi! 👋");
   const base = "qcSessions/" + sid;
   QC.chatOffs.push(onChildAdded(query(ref(db, base + "/messages"), orderByChild("ts")), (s) => qcAddMsg(s.val(), s.key)));
+  QC.chatOffs.push(rcWatch("qcMsgs", base + "/rc", "qc"));
   QC.chatOffs.push(onValue(ref(db, base + "/end"), (s) => { if (QC.sid === sid && s.exists()) qcOnEnd(s.val()); }));
   QC.chatOffs.push(onValue(ref(db, base + "/fr"), (s) => { if (QC.sid === sid) { QC.fr = s.val() || {}; qcRenderFriend(); } }));
   QC.chatOffs.push(onValue(ref(db, base + "/on/" + QC.partnerRole), (s) => { if (QC.sid === sid) qcPartnerPresence(s.exists()); }));
@@ -2614,7 +2735,10 @@ function qcAddMsg(m, key) {
   if (!mine) { const w = document.createElement("div"); w.className = "who"; w.textContent = "Stranger " + m.s; d.append(w); }
   const body = document.createElement("div"); body.textContent = m.text;          // plain text only: no links, no markup
   const tm = document.createElement("div"); tm.className = "tm"; tm.textContent = m.ts ? fmtTime(m.ts) : "";
-  d.append(body, tm);
+  if (mine) tm.append(tickSpan(false));
+  d.dataset.ts = Number(m.ts) || Date.now();
+  if (!mine && m.ts && QC.sid) rcIncoming("qcSessions/" + QC.sid + "/rc/" + QC.role, Number(m.ts), "qcMsgs");
+  d.append(body, tm); schedTicks();
   const box = $("qcMsgs"), near = box.scrollHeight - box.scrollTop - box.clientHeight < 140;
   box.append(d);
   while (box.childElementCount > 200) box.firstElementChild.remove();
@@ -2675,14 +2799,14 @@ async function qcEndChat(reason) {
   const wasEnded = QC.ended; QC.ended = true;
   QC.token++; qcDetachChat();
   QC.sid = null; QC.state = "idle";
-  if (!wasEnded) { try { await set(ref(db, "qcSessions/" + sid + "/end"), { by: role, r: reason, ts: serverTimestamp() }); } catch (e) {} }
-  try { await remove(ref(db, "qcActive/" + alias)); } catch (e) {}
-  try { await remove(ref(db, "qcSessions/" + sid)); } catch (e) {}      // only works once the other person has left too
+  if (!wasEnded) { try { await withTimeout(set(ref(db, "qcSessions/" + sid + "/end"), { by: role, r: reason, ts: serverTimestamp() }), 6000); } catch (e) {} }
+  try { await withTimeout(remove(ref(db, "qcActive/" + alias)), 6000); } catch (e) {}
+  remove(ref(db, "qcSessions/" + sid)).catch(() => {});      // only works once the other person has left too; not waited for
 }
 function qcLeaveToHome() { (async () => { await qcEndChat("e"); qcCloseScreen(false); })(); }
 // Back from the chat screen
 function qcBack(fromPop) {
-  if (QC.state === "searching") { qcCancelSearch(); qcCloseScreen(!!fromPop); return; }
+  if (QC.state === "searching" || QC.state === "starting") { qcCancelSearch(); qcCloseScreen(!!fromPop); return; }
   if (QC.state === "chat" && !QC.ended) {
     if (fromPop && !CapApp) history.pushState({ qc: true }, "");
     askConfirm("End this chat?", "The other person will be told you left. You can always start a new Quick Chat.", "End chat", async () => {
@@ -3138,6 +3262,7 @@ function watchRoomNotif(room) {
     const m = snap.val();
     if (!m || typeof m.text !== "string" || !m.uid || m.uid === uid) return;
     if (typeof m.ts === "number" && m.ts < from) return;
+    if (typeof m.ts === "number") rcIncoming(room.id + "/rc/" + uid, m.ts);
     notifyIncoming({ kind: "room", key: room.id, from: m.uid, name: m.name || "Someone", text: m.text, label: room.emoji + " " + room.name });
   });
 }
