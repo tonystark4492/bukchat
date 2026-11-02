@@ -7,7 +7,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import {
   getDatabase, ref, get, set, push, onValue, onChildAdded, remove,
-  onDisconnect, serverTimestamp, query, limitToLast, orderByChild, startAt, update, onChildRemoved
+  onDisconnect, serverTimestamp, query, limitToLast, orderByChild, startAt, update, onChildRemoved, limitToFirst
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
 import { firebaseConfig } from "./config.js";
 
@@ -799,7 +799,9 @@ function goBack() {
     if ($(id).classList.contains("open")) { $(id).classList.remove("open"); pauseSt(false); return; }
   }
   if (closeMsgSheets()) return;
+  for (const id of ["qcBlockedSheet", "qcReportSheet"]) { if ($(id).classList.contains("open")) { $(id).classList.remove("open"); return; } }
   if (closeMediaOverlays()) return;
+  if (qcOpen) { qcBack(false); return; }
   if (sv) { closeStoryView(); return; }
   if (snOpen) { closeStoryNew(); return; }
   if (profileOpen) { closeProfile(); return; }
@@ -826,6 +828,7 @@ window.addEventListener("popstate", () => {
   if (profileOpen) { closeProfile(); return; }
   if (blockedOpen) { closeBlocked(); return; }
   if (settingsOpen) { closeSettings(); return; }
+  if (qcOpen) { qcBack(true); return; }
   if (grpInfoOpen) { closeGroupInfo(); return; }
   if (grpOpen) { leaveGroup(); return; }
   if (dmOpen) { leaveDm(); return; }
@@ -1266,6 +1269,8 @@ function setTab(t) {
   $("tabRooms").classList.toggle("on", t === "rooms");
   $("tabChats").classList.toggle("on", t === "chats");
   $("tabStories").classList.toggle("on", t === "stories");
+  $("tabQuick").classList.toggle("on", t === "quick");
+  $("quickPane").hidden = t !== "quick";
   $("roomsPane").hidden = t !== "rooms";
   $("chatsPane").hidden = t !== "chats";
   $("storiesPane").hidden = t !== "stories";
@@ -1275,6 +1280,7 @@ function setTab(t) {
 $("tabRooms").onclick = () => setTab("rooms");
 $("tabChats").onclick = () => setTab("chats");
 $("tabStories").onclick = () => setTab("stories");
+$("tabQuick").onclick = () => setTab("quick");
 
 const unreadOf = (e) => Math.max(0, (Number(e.n) || 0) - (Number(e.seen) || 0));
 const dmVisible = (e) => e && e.with && e.ts && e.ts > (Number(e.clearedAt) || 0) && !blocksCache[e.with];
@@ -1312,6 +1318,7 @@ function stopPrivateListeners() {
   Object.values(peerOff).forEach((f) => f()); peerOff = {}; peerPresence = {};
   stopTypingWatch(); clearTimeout(typingIdleTimer); lastTypingSent = 0;
   inboxCache = {}; blocksCache = {}; inboxReady = false;
+  qcStopAll();
   stopGroupList(); grpOpen = false; grpInfoOpen = false; grpId = null; grpOffs.forEach((f) => { try { f(); } catch (e) {} }); grpOffs = [];
   stopRoomNotifs();
   Object.keys(msgCache).forEach((k) => delete msgCache[k]); Object.keys(memCache).forEach((k) => delete memCache[k]);
@@ -2429,6 +2436,398 @@ $("giDelete").onclick = () => {
   });
 };
 
+// ---------- Quick Chat (anonymous strangers) ----------
+// Nobody sees a username, picture or account id here. Each account has a private random "alias"
+// (qcMe/<me>); only the database rules can turn an alias back into an account. Two people are
+// paired by one all-or-nothing database write, so nobody can be matched twice.
+const QC_REPEAT_MS = 120000, QC_FRESH_MS = 240000, QC_STALE_SESSION = 6 * 3600000;
+const QC = { alias: null, state: "idle", sid: null, role: 0, partner: null, searchOffs: [], chatOffs: [], scanTimer: 0, scanning: false,
+  ended: false, blocked: {}, log: [], seen: new Set(), partnerOn: false, offlineTimer: 0, fr: {}, revealed: null, greeted: false, token: 0, myReveal: false };
+let qcOpen = false;
+const qcRand = (n) => { const a = new Uint8Array(n); crypto.getRandomValues(a); return Array.from(a, (x) => "abcdefghijklmnopqrstuvwxyz0123456789"[x % 36]).join(""); };
+async function qcGetAlias() {
+  if (QC.alias) return QC.alias;
+  let a = (await get(ref(db, "qcMe/" + uid))).val();
+  if (!a) {
+    a = qcRand(20);
+    await set(ref(db, "qcAliasOwner/" + a), uid);
+    await set(ref(db, "qcMe/" + uid), a);
+  }
+  QC.alias = a; return a;
+}
+// strangers I just talked to are not offered again for a couple of minutes
+function qcRecentGet() { try { return JSON.parse(localStorage.getItem("bk_qcr_" + uid) || "{}"); } catch (e) { return {}; } }
+function qcRecentAdd(a) { if (!a) return; try { const r = qcRecentGet(), n = Date.now(); r[a] = n; Object.keys(r).forEach((k) => { if (n - r[k] > 3600000) delete r[k]; }); localStorage.setItem("bk_qcr_" + uid, JSON.stringify(r)); } catch (e) {} }
+const qcIsRecent = (a) => { const t = qcRecentGet()[a]; return !!t && Date.now() - t < QC_REPEAT_MS; };
+
+function qcShow(which) {
+  $("qcSearching").classList.toggle("show", which === "search");
+  $("qcChat").classList.toggle("show", which === "chat");
+  $("qcSkip").hidden = which !== "chat"; $("qcMenuBtn").hidden = which !== "chat";
+}
+function qcOpenScreen() {
+  if (qcOpen) return;
+  qcOpen = true; show("qc");
+  history.pushState({ qc: true }, "");
+}
+function qcCloseScreen(fromPop) {
+  qcOpen = false; show("lobby"); setTab("quick");
+  if (!fromPop && !CapApp) { ignorePops++; history.back(); }      // drop the history entry we added
+}
+function qcDetachSearch() {
+  QC.searchOffs.forEach((f) => { try { f(); } catch (e) {} }); QC.searchOffs = [];
+  clearInterval(QC.scanTimer); QC.scanTimer = 0;
+}
+function qcDetachChat() {
+  QC.chatOffs.forEach((f) => { try { f(); } catch (e) {} }); QC.chatOffs = [];
+  clearTimeout(QC.offlineTimer);
+}
+async function qcLoadBlocks() {
+  try { QC.blocked = (await get(ref(db, "qcBlock/" + uid))).val() || {}; } catch (e) {}
+}
+
+// ---- start / resume ----
+async function startQuick() {
+  if (QC.state !== "idle" || !uid) return;
+  QC.state = "starting";
+  const btn = $("qcStartBtn"); btn.disabled = true;
+  try {
+    const alias = await qcGetAlias();
+    await qcLoadBlocks();
+    const act = (await get(ref(db, "qcActive/" + alias))).val();
+    if (act) {                                     // only one session per person: go back to it if it is still alive
+      const sd = (await get(ref(db, "qcSessions/" + act))).val();
+      if (sd && Date.now() - (Number(sd.ts) || 0) < QC_STALE_SESSION && !sd.end) { qcOpenScreen(); await qcJoin(act); return; }
+      await qcDropSession(act, sd, alias);
+    }
+    qcOpenScreen();
+    await qcSearch();
+  } catch (e) {
+    QC.state = "idle"; toast("Couldn't start Quick Chat. Check your connection and try again.");
+    if (qcOpen) qcCloseScreen();
+  } finally { btn.disabled = false; }
+}
+$("qcStartBtn").onclick = startQuick;
+async function qcDropSession(sid, sd, alias) {
+  try { await remove(ref(db, "qcActive/" + alias)); } catch (e) {}
+  if (sd) { try { await remove(ref(db, "qcSessions/" + sid)); } catch (e) {} }
+}
+
+// ---- searching ----
+async function qcSearch() {
+  QC.state = "searching"; QC.token++; const tk = QC.token;
+  QC.sid = null; QC.ended = false;
+  qcDetachSearch(); qcDetachChat();
+  $("qcTitle").textContent = "Quick Chat"; $("qcSub").textContent = "Searching…"; $("qcAv").textContent = "⚡";
+  qcShow("search");
+  const alias = QC.alias, qref = ref(db, "qcQueue/" + alias);
+  try {
+    await set(qref, { ts: serverTimestamp() });
+    onDisconnect(qref).remove().catch(() => {});
+  } catch (e) { QC.state = "idle"; toast("Couldn't join the queue. Try again."); qcCloseScreen(); return; }
+  if (tk !== QC.token) return;
+  QC.searchOffs.push(onValue(ref(db, "qcActive/" + alias), (snap) => {      // someone paired with me
+    const sid = snap.val();
+    if (sid && QC.state === "searching" && tk === QC.token) qcJoin(sid);
+  }));
+  QC.scanTimer = setInterval(() => qcScan(tk), 15000);     // retried later: skipped people become available again
+  qcScan(tk);
+}
+async function qcScan(tk) {
+  if (QC.state !== "searching" || tk !== QC.token || QC.scanning) return;
+  QC.scanning = true;
+  try {
+    const q = query(ref(db, "qcQueue"), orderByChild("ts"), limitToFirst(25));
+    const v = (await get(q)).val() || {}, now = Date.now();
+    const c = Object.entries(v)
+      .filter(([k, x]) => k !== QC.alias && x && typeof x.ts === "number" && now - x.ts < QC_FRESH_MS && !qcIsRecent(k) && !QC.blocked[k])
+      .sort((a, b) => a[1].ts - b[1].ts).slice(0, 6);
+    for (const [k] of c) {
+      if (QC.state !== "searching" || tk !== QC.token) break;
+      if (await qcClaim(k, tk)) break;
+    }
+  } catch (e) {} finally { QC.scanning = false; }
+}
+// 1) write a pending session, 2) take both "active" slots in one all-or-nothing write
+async function qcClaim(b, tk) {
+  const a = QC.alias, sid = a + "_" + b + "_" + qcRand(6);
+  try { await set(ref(db, "qcSessions/" + sid), { a, b, ts: serverTimestamp() }); } catch (e) { return false; }
+  try {
+    await update(ref(db), { ["qcActive/" + a]: sid, ["qcActive/" + b]: sid });
+  } catch (e) {
+    remove(ref(db, "qcSessions/" + sid)).catch(() => {});      // somebody else got there first: try another person
+    return false;
+  }
+  if (QC.state === "searching" && tk === QC.token) qcJoin(sid);
+  return true;
+}
+function qcCancelSearch() {
+  const alias = QC.alias;
+  QC.token++; qcDetachSearch();
+  if (alias) { const r = ref(db, "qcQueue/" + alias); onDisconnect(r).cancel().catch(() => {}); remove(r).catch(() => {}); }
+  QC.state = "idle";
+}
+$("qcCancel").onclick = () => { qcCancelSearch(); qcCloseScreen(false); };
+
+// ---- inside a chat ----
+async function qcJoin(sid) {
+  if (QC.state === "chat" && QC.sid === sid) return;
+  QC.token++; qcDetachSearch();
+  const alias = QC.alias;
+  QC.state = "chat";
+  try { const r = ref(db, "qcQueue/" + alias); onDisconnect(r).cancel().catch(() => {}); remove(r).catch(() => {}); } catch (e) {}
+  let sd = null;
+  try { sd = (await get(ref(db, "qcSessions/" + sid))).val(); } catch (e) {}
+  if (!sd) { await qcDropSession(sid, null, alias); QC.state = "idle"; qcSearch(); return; }   // stale pairing: look again
+  QC.sid = sid; QC.role = sd.a === alias ? 1 : 2; QC.partner = sd.a === alias ? sd.b : sd.a; QC.partnerRole = QC.role === 1 ? 2 : 1;
+  QC.ended = !!sd.end; QC.log = []; QC.seen = new Set(); QC.fr = {}; QC.revealed = null; QC.greeted = false; QC.myReveal = false; QC.partnerOn = false;
+  $("qcMsgs").innerHTML = ""; $("qcInput").value = ""; $("qcStatus").classList.remove("show");
+  $("qcTitle").textContent = "Stranger " + QC.partnerRole; $("qcSub").textContent = "You are Stranger " + QC.role; $("qcAv").textContent = String(QC.partnerRole);
+  qcShow("chat"); qcRenderState();
+  qcSys("You're now chatting with Stranger " + QC.partnerRole + ". Say hi! 👋");
+  const base = "qcSessions/" + sid;
+  QC.chatOffs.push(onChildAdded(query(ref(db, base + "/messages"), orderByChild("ts")), (s) => qcAddMsg(s.val(), s.key)));
+  QC.chatOffs.push(onValue(ref(db, base + "/end"), (s) => { if (QC.sid === sid && s.exists()) qcOnEnd(s.val()); }));
+  QC.chatOffs.push(onValue(ref(db, base + "/fr"), (s) => { if (QC.sid === sid) { QC.fr = s.val() || {}; qcRenderFriend(); } }));
+  QC.chatOffs.push(onValue(ref(db, base + "/on/" + QC.partnerRole), (s) => { if (QC.sid === sid) qcPartnerPresence(s.exists()); }));
+  // my own presence: the other side can tell when I lose my connection
+  const mine = ref(db, base + "/on/" + QC.role);
+  QC.chatOffs.push(onValue(ref(db, ".info/connected"), (s) => {
+    if (QC.sid !== sid) return;
+    if (s.val() === true) {
+      $("qcStatus").classList.remove("show");
+      if (!QC.ended) { onDisconnect(mine).remove().catch(() => {}); set(mine, true).catch(() => {}); }
+    } else { $("qcStatus").textContent = "You're offline. Reconnecting…"; $("qcStatus").classList.add("show"); }
+  }));
+  QC.chatOffs.push(() => { onDisconnect(mine).cancel().catch(() => {}); remove(mine).catch(() => {}); });
+  qcPartnerPresence(false);
+}
+function qcSys(t) {
+  const d = document.createElement("div"); d.className = "sys"; d.textContent = t;
+  $("qcMsgs").append(d); $("qcMsgs").scrollTop = $("qcMsgs").scrollHeight;
+}
+function qcAddMsg(m, key) {
+  if (!m || typeof m.text !== "string" || QC.seen.has(key)) return;
+  QC.seen.add(key);
+  const mine = m.s === QC.role;
+  const d = document.createElement("div"); d.className = "msg " + (mine ? "mine" : "other"); d.dataset.key = key;
+  if (!mine) { const w = document.createElement("div"); w.className = "who"; w.textContent = "Stranger " + m.s; d.append(w); }
+  const body = document.createElement("div"); body.textContent = m.text;          // plain text only: no links, no markup
+  const tm = document.createElement("div"); tm.className = "tm"; tm.textContent = m.ts ? fmtTime(m.ts) : "";
+  d.append(body, tm);
+  const box = $("qcMsgs"), near = box.scrollHeight - box.scrollTop - box.clientHeight < 140;
+  box.append(d);
+  while (box.childElementCount > 200) box.firstElementChild.remove();
+  if (near || mine) box.scrollTop = box.scrollHeight;
+  QC.log.push("Stranger " + m.s + ": " + m.text.slice(0, 120)); if (QC.log.length > 8) QC.log.shift();
+}
+$("qcForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("qcInput").value.trim();
+  if (!text || QC.state !== "chat" || QC.ended) return;
+  $("qcInput").value = ""; autosize($("qcInput"));
+  try { await set(push(ref(db, "qcSessions/" + QC.sid + "/messages")), { s: QC.role, text, ts: serverTimestamp() }); }
+  catch (err) { toast("Not sent. Check your connection."); $("qcInput").value = text; }
+});
+$("qcInput").addEventListener("input", () => autosize($("qcInput")));
+$("qcInput").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && window.matchMedia("(hover:hover)").matches) { e.preventDefault(); $("qcForm").requestSubmit(); } });
+
+// the other person's connection: gone for 30 s => say so and offer a new stranger
+function qcPartnerPresence(on) {
+  QC.partnerOn = on; clearTimeout(QC.offlineTimer);
+  if (QC.ended) return;
+  if (on) { if ($("qcStatus").textContent.startsWith("Stranger")) $("qcStatus").classList.remove("show"); return; }
+  QC.offlineTimer = setTimeout(() => {
+    if (QC.ended || QC.partnerOn || QC.state !== "chat") return;
+    $("qcStatus").textContent = "Stranger " + QC.partnerRole + " seems to be offline. You can wait, or find someone new.";
+    $("qcStatus").classList.add("show");
+    $("qcEnded").classList.add("show"); $("qcNew").textContent = "Find a new stranger"; $("qcLeave").textContent = "Keep waiting";
+    $("qcLeave").dataset.wait = "1";
+  }, 30000);
+}
+function qcOnEnd(end) {
+  if (QC.ended) return;
+  QC.ended = true; clearTimeout(QC.offlineTimer);
+  if (end.by !== QC.role) {
+    qcSys(end.r === "b" ? "Stranger " + QC.partnerRole + " left the chat." : end.r === "d" ? "Stranger " + QC.partnerRole + " lost connection and left." : "Stranger " + QC.partnerRole + " ended the chat.");
+    qcRecentAdd(QC.partner);
+  }
+  qcRenderState();
+}
+function qcRenderState() {
+  const over = QC.ended;
+  $("qcForm").hidden = over;
+  $("qcEnded").classList.toggle("show", over);
+  if (over) { $("qcNew").textContent = "Find a new stranger"; $("qcLeave").textContent = "Leave"; delete $("qcLeave").dataset.wait; $("qcStatus").classList.remove("show"); }
+  qcRenderFriend();
+}
+$("qcNew").onclick = async () => { await qcEndChat(QC.ended ? "e" : "s"); QC.state = "idle"; await qcSearch(); };
+$("qcLeave").onclick = () => {
+  if ($("qcLeave").dataset.wait) { $("qcEnded").classList.remove("show"); $("qcStatus").classList.remove("show"); return; }
+  qcLeaveToHome();
+};
+$("qcSkip").onclick = async () => { if (QC.state !== "chat") return; await qcEndChat("s"); QC.state = "idle"; await qcSearch(); };
+
+async function qcEndChat(reason) {
+  const sid = QC.sid, alias = QC.alias, role = QC.role;
+  if (!sid) return;
+  qcRecentAdd(QC.partner);
+  const wasEnded = QC.ended; QC.ended = true;
+  QC.token++; qcDetachChat();
+  QC.sid = null; QC.state = "idle";
+  if (!wasEnded) { try { await set(ref(db, "qcSessions/" + sid + "/end"), { by: role, r: reason, ts: serverTimestamp() }); } catch (e) {} }
+  try { await remove(ref(db, "qcActive/" + alias)); } catch (e) {}
+  try { await remove(ref(db, "qcSessions/" + sid)); } catch (e) {}      // only works once the other person has left too
+}
+function qcLeaveToHome() { (async () => { await qcEndChat("e"); qcCloseScreen(false); })(); }
+// Back from the chat screen
+function qcBack(fromPop) {
+  if (QC.state === "searching") { qcCancelSearch(); qcCloseScreen(!!fromPop); return; }
+  if (QC.state === "chat" && !QC.ended) {
+    if (fromPop && !CapApp) history.pushState({ qc: true }, "");
+    askConfirm("End this chat?", "The other person will be told you left. You can always start a new Quick Chat.", "End chat", async () => {
+      await qcEndChat("e"); qcCloseScreen(false);
+    });
+    return;
+  }
+  (async () => { await qcEndChat("e"); qcCloseScreen(!!fromPop); })();
+}
+$("qcBack").onclick = () => qcBack(false);
+
+// ---- friend requests ----
+function qcFrState() {
+  const mine = QC.fr[QC.role], theirs = QC.fr[QC.partnerRole];
+  const accepted = (mine === "r" && theirs === "y") || (mine === "y" && theirs === "r") || (mine === "r" && theirs === "r");
+  return { mine, theirs, accepted };
+}
+async function qcWriteReveal() {
+  if (QC.myReveal) return; QC.myReveal = true;
+  try { await set(ref(db, "qcReveal/" + QC.sid + "/" + QC.role), uid); } catch (e) { QC.myReveal = false; }
+}
+function qcRenderFriend() {
+  const box = $("qcFr"); if (QC.state !== "chat") return;
+  const { mine, theirs, accepted } = qcFrState();
+  box.innerHTML = ""; box.classList.remove("show");
+  const txt = document.createElement("div"); txt.className = "txt";
+  const add = (...els) => { box.append(...els); box.classList.add("show"); };
+  const btn = (label, cls, fn) => { const b = document.createElement("button"); b.type = "button"; b.textContent = label; if (cls) b.className = cls; b.onclick = fn; return b; };
+  if (accepted) {
+    qcRevealFlow(box, txt, add, btn); return;
+  }
+  if (theirs === "r" && !mine) {
+    txt.textContent = "🤝 Stranger " + QC.partnerRole + " wants to be friends";
+    add(txt, btn("Accept", "pri", () => qcAnswer("y")), btn("Decline", "", () => qcAnswer("n"))); return;
+  }
+  if (mine === "r" && !theirs) { txt.textContent = "Friend request sent. Waiting for Stranger " + QC.partnerRole + "…"; add(txt); return; }
+  if ((mine === "r" && theirs === "n")) { txt.textContent = "Stranger " + QC.partnerRole + " declined the friend request."; add(txt); return; }
+  if (!mine && !theirs && !QC.ended) {
+    txt.textContent = "Enjoying the chat?";
+    add(txt, btn("🤝 Add friend", "", qcSendRequest));
+  }
+}
+async function qcSendRequest() {
+  try {
+    await qcWriteReveal();      // my account id is stored, but nobody can read it unless the request is accepted
+    await set(ref(db, "qcSessions/" + QC.sid + "/fr/" + QC.role), "r");
+    toast("Friend request sent.");
+  } catch (e) { toast("Couldn't send the request."); }
+}
+async function qcAnswer(v) {
+  try {
+    if (v === "y") await qcWriteReveal();
+    await set(ref(db, "qcSessions/" + QC.sid + "/fr/" + QC.role), v);
+    if (v === "n") toast("Declined.");
+  } catch (e) { toast("Couldn't answer. Try again."); }
+}
+// accepted: both sides now see each other's real profile, and the chat moves into Private Chats
+async function qcRevealFlow(box, txt, add, btn) {
+  const sid = QC.sid, pr = QC.partnerRole;
+  txt.textContent = "🎉 Friend request accepted. Revealing profiles…"; add(txt);
+  await qcWriteReveal();
+  if (!QC.revealed) {
+    try { QC.revealed = (await get(ref(db, "qcReveal/" + sid + "/" + pr))).val() || null; } catch (e) {}
+    if (!QC.revealed) {
+      setTimeout(() => { if (QC.sid === sid && qcFrState().accepted && !QC.revealed) qcRenderFriend(); }, 1500);
+      return;
+    }
+  }
+  if (QC.sid !== sid) return;
+  const other = QC.revealed;
+  const nm = (await getName(other)) || "your new friend";
+  if (QC.sid !== sid) return;
+  box.innerHTML = "";
+  const av = document.createElement("div"); av.className = "av"; av.textContent = nm[0].toUpperCase(); paintAv(av, other, nm);
+  const t2 = document.createElement("div"); t2.className = "txt"; t2.textContent = "🎉 You and " + nm + " are friends now!";
+  box.append(av, t2, btn("Open chat", "pri", () => qcOpenPrivate(other)));
+  box.classList.add("show");
+  const { mine } = qcFrState();
+  if (!QC.greeted && (mine === "y" || (mine === "r" && QC.fr[pr] === "r" && QC.role === 1))) {      // one side starts the private chat so it appears in both chat lists
+    QC.greeted = true;
+    const a = uid < other ? uid : other, b = uid < other ? other : uid, conv = a + "_" + b;
+    try { await set(ref(db, "dms/" + conv + "/meta"), { a, b }); } catch (e) {}
+    try { await dmWrite(conv, other, push(ref(db, "dms/" + conv + "/messages")).key, "🤝 We met on Quick Chat"); } catch (e) {}
+  }
+}
+async function qcOpenPrivate(other) {
+  await qcEndChat("e"); qcCloseScreen(false); setTimeout(() => openDm(other, "lobby"), 90);
+}
+
+// ---- menu: report / block ----
+$("qcMenuBtn").onclick = () => {
+  if (QC.state !== "chat") return;
+  openMenu($("qcMenuBtn"), [
+    { label: "🚩 Report", fn: () => $("qcReportSheet").classList.add("open") },
+    { label: "⛔ Block", danger: true, fn: qcAskBlock }
+  ]);
+};
+$("qcReportNo").onclick = () => $("qcReportSheet").classList.remove("open");
+$("qcReportSheet").onclick = (e) => { if (e.target.id === "qcReportSheet") $("qcReportSheet").classList.remove("open"); };
+$("qcReportSheet").querySelectorAll("[data-why]").forEach((b) => {
+  b.onclick = async () => {
+    $("qcReportSheet").classList.remove("open");
+    if (!QC.sid) return;
+    const sid = QC.sid;
+    try {
+      await set(ref(db, "qcReports/" + uid + "_" + sid), { by: uid, against: QC.partner, sid, why: b.dataset.why, ts: serverTimestamp(), log: QC.log.join("\n").slice(0, 1900) });
+      toast("Reported. Thank you. 🚩");
+    } catch (e) { toast("Already reported, or couldn't send. Try again later."); return; }
+    qcAskBlock(true);
+  };
+});
+function qcAskBlock(afterReport) {
+  askConfirm(afterReport === true ? "Block this stranger too?" : "Block this stranger?",
+    "You won't be matched with them again unless you unblock them (Quick tab → Blocked strangers). They aren't told.", "Block",
+    async () => {
+      const p = QC.partner;
+      try { await set(ref(db, "qcBlock/" + uid + "/" + p), Date.now()); QC.blocked[p] = Date.now(); } catch (e) { toast("Couldn't block. Try again."); return; }
+      toast("Blocked.");
+      await qcEndChat("b"); qcCloseScreen(false);
+    });
+}
+$("qcBlockedBtn").onclick = async () => {
+  $("qcBlockedSheet").classList.add("open"); await qcLoadBlocks(); qcRenderBlocked();
+};
+$("qcBlockedClose").onclick = () => $("qcBlockedSheet").classList.remove("open");
+$("qcBlockedSheet").onclick = (e) => { if (e.target.id === "qcBlockedSheet") $("qcBlockedSheet").classList.remove("open"); };
+function qcRenderBlocked() {
+  const box = $("qcBlockedList"); box.innerHTML = "";
+  const list = Object.entries(QC.blocked).sort((a, b) => b[1] - a[1]);
+  if (!list.length) { const d = document.createElement("div"); d.className = "mmPrev"; d.textContent = "You haven't blocked anyone."; box.append(d); return; }
+  list.forEach(([a, t], i) => {
+    const row = document.createElement("div"); row.className = "qcRow";
+    const sp = document.createElement("span"); sp.textContent = "Blocked stranger"; const sm = document.createElement("small"); sm.textContent = new Date(Number(t) || 0).toLocaleDateString([], { day: "numeric", month: "short" }); sp.append(sm);
+    const b = document.createElement("button"); b.type = "button"; b.textContent = "Unblock";
+    b.onclick = async () => { try { await remove(ref(db, "qcBlock/" + uid + "/" + a)); delete QC.blocked[a]; qcRenderBlocked(); toast("Unblocked. You may be matched again."); } catch (e) { toast("Couldn't unblock."); } };
+    row.append(sp, b); box.append(row);
+  });
+}
+// stop everything (sign-out etc.)
+function qcStopAll() {
+  QC.token++; qcDetachSearch(); qcDetachChat();
+  if (QC.alias && QC.state === "searching") { remove(ref(db, "qcQueue/" + QC.alias)).catch(() => {}); }
+  QC.state = "idle"; QC.sid = null; QC.alias = null; QC.blocked = {}; qcOpen = false;
+}
+
 // ---- Block / unblock ----
 function askBlock(otherUid, name) {
   askConfirm(
@@ -3484,7 +3883,8 @@ $("delConfirm").onclick = async () => {
         } catch (e) {}
       }
     } catch (e) {}
-    for (const n of ["stories", "storyViews", "storyHide", "storyIndex", "hidden", "userGroups", "groupMake"]) { try { await remove(ref(db, n + "/" + me)); } catch (e) {} }
+    for (const n of ["stories", "storyViews", "storyHide", "storyIndex", "hidden", "userGroups", "groupMake", "qcBlock"]) { try { await remove(ref(db, n + "/" + me)); } catch (e) {} }
+    try { const qa = (await get(ref(db, "qcMe/" + me))).val(); if (qa) { for (const pth of ["qcQueue/" + qa, "qcActive/" + qa]) { try { await remove(ref(db, pth)); } catch (e) {} } await remove(ref(db, "qcAliasOwner/" + qa)); } await remove(ref(db, "qcMe/" + me)); } catch (e) {}
     try { await onDisconnect(ref(db, "presence/" + me)).cancel(); } catch (e) {}
     await remove(ref(db, "presence/" + me));
     await remove(ref(db, "names/" + key));
