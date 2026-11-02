@@ -178,7 +178,9 @@
   #delCancel,#clearCancel{background:var(--panel2);color:var(--white)}
   #delConfirm,#clearOk{background:var(--danger);color:#000}
   #delConfirm:disabled,#clearOk:disabled{opacity:.4}
-  .msg .tick{letter-spacing:0}
+  .msg .tick{letter-spacing:-2px;margin-left:2px}
+  .msg .tick.seen{color:#e0001b;background:#fff;border-radius:6px;padding:0 3px 0 1px;font-weight:800;letter-spacing:-1px}
+  .mic:disabled,.iconBtn:disabled{opacity:.4}
 
 
   /* Message options, replies, links */
