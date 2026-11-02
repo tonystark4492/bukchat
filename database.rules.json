@@ -86,6 +86,21 @@
             ".validate": false
           }
         }
+      },
+      "rc": {
+        ".read": "auth != null && root.child('users/' + auth.uid).exists()",
+        "$u": {
+          ".write": "auth != null && auth.uid === $u && root.child('users/' + auth.uid).exists()",
+          "d": {
+            ".validate": "newData.val() === now"
+          },
+          "s": {
+            ".validate": "newData.val() === now"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
       }
     },
     "room_desi": {
@@ -148,6 +163,21 @@
           },
           "rt": {
             ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 80"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
+      "rc": {
+        ".read": "auth != null && root.child('users/' + auth.uid).exists()",
+        "$u": {
+          ".write": "auth != null && auth.uid === $u && root.child('users/' + auth.uid).exists()",
+          "d": {
+            ".validate": "newData.val() === now"
+          },
+          "s": {
+            ".validate": "newData.val() === now"
           },
           "$other": {
             ".validate": false
@@ -220,6 +250,21 @@
             ".validate": false
           }
         }
+      },
+      "rc": {
+        ".read": "auth != null && root.child('users/' + auth.uid).exists()",
+        "$u": {
+          ".write": "auth != null && auth.uid === $u && root.child('users/' + auth.uid).exists()",
+          "d": {
+            ".validate": "newData.val() === now"
+          },
+          "s": {
+            ".validate": "newData.val() === now"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
       }
     },
     "room_americas": {
@@ -282,6 +327,21 @@
           },
           "rt": {
             ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 80"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
+      "rc": {
+        ".read": "auth != null && root.child('users/' + auth.uid).exists()",
+        "$u": {
+          ".write": "auth != null && auth.uid === $u && root.child('users/' + auth.uid).exists()",
+          "d": {
+            ".validate": "newData.val() === now"
+          },
+          "s": {
+            ".validate": "newData.val() === now"
           },
           "$other": {
             ".validate": false
@@ -354,6 +414,21 @@
             ".validate": false
           }
         }
+      },
+      "rc": {
+        ".read": "auth != null && root.child('users/' + auth.uid).exists()",
+        "$u": {
+          ".write": "auth != null && auth.uid === $u && root.child('users/' + auth.uid).exists()",
+          "d": {
+            ".validate": "newData.val() === now"
+          },
+          "s": {
+            ".validate": "newData.val() === now"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
       }
     },
     "dms": {
@@ -413,6 +488,21 @@
           "$u": {
             ".write": "auth != null && auth.uid === $u && (root.child('dms/' + $cid + '/meta/a').val() === auth.uid || root.child('dms/' + $cid + '/meta/b').val() === auth.uid) && !root.child('blocks/' + (root.child('dms/' + $cid + '/meta/a').val() === auth.uid ? root.child('dms/' + $cid + '/meta/b').val() : root.child('dms/' + $cid + '/meta/a').val()) + '/' + auth.uid).exists() && !root.child('blocks/' + auth.uid + '/' + (root.child('dms/' + $cid + '/meta/a').val() === auth.uid ? root.child('dms/' + $cid + '/meta/b').val() : root.child('dms/' + $cid + '/meta/a').val())).exists()",
             ".validate": "newData.val() === now"
+          }
+        },
+        "rc": {
+          ".read": "auth != null && (root.child('dms/' + $cid + '/meta/a').val() === auth.uid || root.child('dms/' + $cid + '/meta/b').val() === auth.uid)",
+          "$u": {
+            ".write": "auth != null && auth.uid === $u && (root.child('dms/' + $cid + '/meta/a').val() === auth.uid || root.child('dms/' + $cid + '/meta/b').val() === auth.uid)",
+            "d": {
+              ".validate": "newData.val() === now"
+            },
+            "s": {
+              ".validate": "newData.val() === now"
+            },
+            "$other": {
+              ".validate": false
+            }
           }
         }
       }
@@ -743,6 +833,21 @@
         },
         "$other": {
           ".validate": false
+        },
+        "rc": {
+          ".read": "auth != null && root.child('groups/' + $gid + '/members/' + auth.uid).exists()",
+          "$u": {
+            ".write": "auth != null && auth.uid === $u && root.child('groups/' + $gid + '/members/' + auth.uid).exists()",
+            "d": {
+              ".validate": "newData.val() === now"
+            },
+            "s": {
+              ".validate": "newData.val() === now"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
         }
       }
     },
@@ -871,6 +976,21 @@
         },
         "$other": {
           ".validate": false
+        },
+        "rc": {
+          "$r": {
+            ".write": "auth != null && (($r === '1' && root.child('qcMe/' + auth.uid).val() === root.child('qcSessions/' + $sid + '/a').val()) || ($r === '2' && root.child('qcMe/' + auth.uid).val() === root.child('qcSessions/' + $sid + '/b').val()))",
+            ".validate": "$r.matches(/^[12]$/)",
+            "d": {
+              ".validate": "newData.val() === now"
+            },
+            "s": {
+              ".validate": "newData.val() === now"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
         }
       }
     },
