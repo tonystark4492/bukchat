@@ -249,6 +249,48 @@
   #gNewRow button{width:auto;padding:8px 12px;font-size:13px}
   #giNameRow[hidden],#giAdmin[hidden],#giPicBtns[hidden],#giNameView[hidden],.giDanger[hidden],#gNewPicNo[hidden],#giPicRemove[hidden]{display:none!important}
 
+
+  /* Quick Chat */
+  .qcCard{margin:6px 0 14px;padding:22px 18px;border-radius:22px;background:var(--panel);border:1px solid var(--line);text-align:center}
+  .qcBolt{width:64px;height:64px;margin:0 auto 10px;border-radius:50%;background:var(--accent);color:#000;display:grid;place-items:center;font-size:32px}
+  .qcCard h2{margin:0 0 6px;font-size:22px}
+  .qcCard p{margin:0 0 16px;color:var(--muted);font-size:14px;line-height:1.45}
+  .qcStart{width:100%;padding:15px;border-radius:14px;background:var(--accent);color:#000;font-size:17px;font-weight:800}
+  .qcLinks{display:flex;justify-content:center;gap:10px;margin-top:12px}
+  .qcRules{margin:14px 4px 0;padding:0;list-style:none;color:var(--muted);font-size:13px;line-height:1.6;text-align:left}
+  #qcBody{flex:1;min-height:0;display:flex;flex-direction:column}
+  #qcSearching{flex:1;display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:30px}
+  #qcSearching.show{display:flex}
+  #qcSearching .pulse{width:92px;height:92px;border-radius:50%;background:var(--accent);color:#000;display:grid;place-items:center;font-size:40px;animation:qcPulse 1.4s ease-in-out infinite}
+  @keyframes qcPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.12);opacity:.7}}
+  #qcSearching button{padding:12px 26px;border-radius:14px;background:var(--panel2);color:var(--white);font-weight:800}
+  #qcChat{flex:1;min-height:0;display:none;flex-direction:column}
+  #qcChat.show{display:flex}
+  #qcMsgs{flex:1;min-height:0;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:6px}
+  #qcStatus{display:none;padding:8px 14px;background:var(--panel2);color:var(--muted);font-size:13px;text-align:center}
+  #qcStatus.show{display:block}
+  #qcFr{padding:8px 12px;border-top:1px solid var(--line);background:var(--panel);display:none;align-items:center;gap:10px;font-size:14px}
+  #qcFr.show{display:flex}
+  #qcFr .txt{flex:1;min-width:0}
+  #qcFr button{padding:9px 14px;border-radius:12px;font-weight:800;background:var(--panel2);color:var(--white)}
+  #qcFr button.pri{background:var(--accent);color:#000}
+  #qcFr .av{width:34px;height:34px;flex:none}
+  #qcEnded{display:none;gap:10px;padding:10px 12px;border-top:1px solid var(--line);background:var(--panel)}
+  #qcEnded.show{display:flex}
+  #qcEnded button{flex:1;padding:13px;border-radius:12px;font-weight:800;background:var(--panel2);color:var(--white)}
+  #qcEnded button.pri{background:var(--accent);color:#000}
+  #qcForm{display:flex;align-items:flex-end;gap:10px;padding:10px 12px;border-top:1px solid var(--line);background:var(--panel)}
+  #qcForm[hidden]{display:none}
+  #qcInput{flex:1;min-width:0;display:block;resize:none;line-height:1.3;max-height:120px;padding:13px 16px;border-radius:24px;border:2px solid var(--line);background:var(--bg);color:var(--white);font-size:16px}
+  #qcSend{width:48px;height:48px;border-radius:50%;background:var(--accent);color:#000;font-size:20px;flex:none}
+  .qcSkipBtn{padding:8px 12px;border-radius:12px;background:var(--accent);color:#000;font-weight:800;font-size:14px}
+  #qcBlockedSheet,#qcReportSheet{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:flex-end;justify-content:center;z-index:50}
+  #qcBlockedSheet.open,#qcReportSheet.open{display:flex}
+  .qcRow{display:flex;align-items:center;gap:10px;padding:10px 12px}
+  .qcRow span{flex:1;font-weight:700}
+  .qcRow small{color:var(--muted);display:block;font-weight:600}
+  .qcRow button{padding:8px 12px;border-radius:10px;background:var(--panel2);color:var(--white);font-weight:800}
+
   /* Photos and voice messages */
   .mBtn{width:44px;height:48px;flex:none;border-radius:50%;background:var(--panel2);color:var(--white);font-size:20px;display:grid;place-items:center}
   .mBtn.mic{width:48px;background:var(--accent);color:#000}
@@ -507,6 +549,16 @@
       <div id="dmList"></div>
       <div class="emptyNote" id="dmEmpty">No private chats yet.<br>Type a username above, or tap a name inside a chat room, to say hi.</div>
     </div>
+    <div class="pane" id="quickPane" hidden>
+      <div class="qcCard">
+        <div class="qcBolt">⚡</div>
+        <h2>Quick Chat</h2>
+        <p>Talk to a random stranger. You'll be <b>Stranger 1</b> or <b>Stranger 2</b>. Your username and picture stay hidden unless you both choose to become friends.</p>
+        <button class="qcStart" id="qcStartBtn" type="button">Start</button>
+        <div class="qcLinks"><button class="smallBtn" id="qcBlockedBtn" type="button">Blocked strangers</button></div>
+        <ul class="qcRules"><li>🤝 Be kind. Skip anyone who makes you uncomfortable.</li><li>🔒 Never share your real name, number or address.</li><li>🚩 Use Report for rude or unsafe behaviour.</li></ul>
+      </div>
+    </div>
     <div class="pane" id="storiesPane" hidden>
       <button class="stAdd" id="stAddBtn" type="button"><span class="plus">+</span><span class="stT"><b>Add to your story</b><small>Photo, video or text · disappears after 24 hours</small></span></button>
       <div id="stMine"></div>
@@ -519,9 +571,39 @@
   <nav class="bnav" aria-label="Main">
     <button class="bn on" id="tabRooms" data-tab="rooms"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg>Rooms</button>
     <button class="bn" id="tabChats" data-tab="chats"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.8-4 3.5-6 7-6s6.2 2 7 6"/></svg>Chats<span class="badge" id="dmBadge" hidden>0</span></button>
+    <button class="bn" id="tabQuick" data-tab="quick"><svg viewBox="0 0 24 24"><path d="M13 3L5 13.5h6L10 21l8-10.5h-6z"/></svg>Quick</button>
     <button class="bn" id="tabStories" data-tab="stories"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" stroke-dasharray="3.2 2.6"/><circle cx="12" cy="12" r="3.2"/></svg>Stories</button>
   </nav>
 </section>
+
+<!-- Quick Chat -->
+<section class="screen" id="qc">
+  <header class="chatTop">
+    <button class="iconBtn" id="qcBack" aria-label="Back">‹</button>
+    <div class="av" style="width:38px;height:38px;flex:none;font-size:20px" id="qcAv">⚡</div>
+    <div class="ct"><div class="n" id="qcTitle">Quick Chat</div><div class="s" id="qcSub">&nbsp;</div></div>
+    <button class="qcSkipBtn" id="qcSkip" type="button" hidden>Skip ⏭</button>
+    <button class="iconBtn" id="qcMenuBtn" aria-label="Menu" hidden>⋮</button>
+  </header>
+  <div id="qcBody">
+    <div id="qcSearching"><div class="pulse">⚡</div><div style="font-size:18px;font-weight:800">Looking for a stranger…</div><div style="color:var(--muted);font-size:14px">This usually takes a few seconds.<br>You can keep this screen open.</div><button id="qcCancel" type="button">Cancel</button></div>
+    <div id="qcChat">
+      <div id="qcStatus"></div>
+      <div id="qcMsgs"></div>
+      <div id="qcFr"></div>
+      <div id="qcEnded"><button id="qcNew" class="pri" type="button">Find a new stranger</button><button id="qcLeave" type="button">Leave</button></div>
+      <form id="qcForm" autocomplete="off"><textarea id="qcInput" rows="1" placeholder="Say something…" maxlength="300" enterkeyhint="enter"></textarea><button id="qcSend" type="submit" aria-label="Send">➤</button></form>
+    </div>
+  </div>
+</section>
+<div id="qcBlockedSheet"><div class="mmBox"><div class="mmPrev">Blocked strangers</div><div id="qcBlockedList"></div><button id="qcBlockedClose" type="button">Close</button></div></div>
+<div id="qcReportSheet"><div class="mmBox"><div class="mmPrev">Report this stranger</div>
+  <button type="button" data-why="abuse">Rude, bullying or threats</button>
+  <button type="button" data-why="sexual">Sexual or inappropriate content</button>
+  <button type="button" data-why="spam">Spam or scams</button>
+  <button type="button" data-why="minor">Seems underage</button>
+  <button type="button" data-why="other">Something else</button>
+  <button type="button" id="qcReportNo">Cancel</button></div></div>
 
 <!-- Stories: new story -->
 <section class="screen" id="storyNew">
