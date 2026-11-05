@@ -945,6 +945,7 @@ function paintTheme(vars) {
   const m = document.querySelector('meta[name="theme-color"]'); if (m) m.setAttribute("content", bg);
   document.querySelectorAll(".sw").forEach((b) => b.classList.toggle("on", curTheme.id === b.dataset.t));
   document.querySelectorAll("#heroGrid .tCard").forEach((b) => b.classList.toggle("on", curTheme.id === b.dataset.t));
+  const tcur = $("themeCur"); if (tcur && typeof themeLabel === "function") tcur.textContent = "Now: " + themeLabel(curTheme);
 }
 function varsOfTheme(t) {
   if (t.id === "custom") return customVars(t.main, t.bgHex || "");
@@ -1022,6 +1023,29 @@ function buildCustom() {
   cuRefresh();
 }
 try { buildHeroGrid(); buildCustom(); } catch (e) { console.warn("theme UI", e); }   // never let a mismatched page block start-up
+// ---- Colours & Themes screen: Colours tab first, Premium themes tab second ----
+// Premium themes are free for now. To make them paid later, set PREMIUM_FREE = false and switch on
+// `isPremiumUnlocked()` (e.g. from a "premium" flag on the user account).
+const PREMIUM_FREE = true;
+const isPremiumUnlocked = () => PREMIUM_FREE;
+function themeLabel(t) {
+  if (t.id === "custom") return "My own colour";
+  const hero = HERO.find((x) => x.id === t.id); if (hero) return hero.name + " ✨";
+  return t.id.charAt(0).toUpperCase() + t.id.slice(1);
+}
+function buildThemeNav() {
+  const tc = $("tabCol"), tp = $("tabPrem"), pc = $("paneCol"), pp = $("panePrem");
+  const pick = (prem) => { tc.classList.toggle("on", !prem); tp.classList.toggle("on", prem); pc.hidden = prem; pp.hidden = !prem; };
+  tc.onclick = () => pick(false); tp.onclick = () => pick(true);
+  $("themeRow").onclick = () => { pick(false); setThemeView(true); history.pushState({ settings: true }, ""); };
+  document.querySelectorAll("#heroGrid .tCard").forEach((c) => {
+    const badge = document.createElement("div"); badge.className = "tp"; badge.textContent = isPremiumUnlocked() ? "PREMIUM" : "🔒 PREMIUM"; c.append(badge);
+    const go = c.onclick;
+    c.onclick = () => { if (!isPremiumUnlocked()) { toast("Premium theme"); return; } go(); };
+  });
+  $("themeCur").textContent = "Now: " + themeLabel(curTheme);
+}
+try { buildThemeNav(); } catch (e) { console.warn("theme nav", e); }
 let savedTheme = null;
 try { const raw = localStorage.getItem("bukchat-theme2"); savedTheme = raw ? JSON.parse(raw) : (localStorage.getItem("bukchat-theme") ? { id: localStorage.getItem("bukchat-theme") } : null); } catch (e) {}
 try { if (savedTheme && savedTheme.id === "custom" && /^#[0-9a-fA-F]{6}$/.test(savedTheme.main || "")) { cuLoadFrom(savedTheme.main, (BG_CHOICES.find((x) => x[2] && x[2] === savedTheme.bgHex) || ["auto"])[0]); cuRefresh(); } } catch (e) {}
@@ -1341,6 +1365,7 @@ $("pfSave").onclick = async () => {
 // ---------- Settings screen ----------
 let settingsOpen = false, settingsReturn = "lobby";
 function openSettings() {
+  setThemeView(false);
   const active = document.querySelector(".screen.active");
   settingsReturn = active && active.id !== "settings" ? active.id : "lobby";
   $("setName").textContent = myName || "";
@@ -1349,8 +1374,16 @@ function openSettings() {
   show("settings");
 }
 function closeSettings() {
+  if (themeView) { setThemeView(false); if (!CapApp) history.pushState({ settings: true }, ""); return; }   // back from Colours & Themes goes to Settings
   settingsOpen = false;
   show(settingsReturn);
+}
+let themeView = false;
+function setThemeView(on) {
+  themeView = on; const st = $("settings");
+  st.classList.toggle("tv", on);
+  const t = st.querySelector(".chatTop .ct .n"); if (t) t.textContent = on ? "Colours & Themes" : "Settings";
+  const sb = st.querySelector(".sBody"); if (sb) sb.scrollTop = 0;
 }
 $("settingsBack").onclick = () => { if (CapApp) closeSettings(); else history.back(); };
 
