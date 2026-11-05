@@ -481,6 +481,16 @@
     button{transition:none}
   }
 
+
+  #settings .sBody,#blocked .sBody{max-width:560px;width:100%;margin-left:auto;margin-right:auto}
+  #themeView{display:none}
+  #settings.tv #themeView{display:block}
+  #settings.tv .sBody>:not(#themeView){display:none}
+  .tTabs{display:flex;gap:8px;margin-bottom:18px}
+  .tTabs button{flex:1;padding:12px 8px;border-radius:14px;background:var(--panel);border:2px solid var(--line);color:var(--white);font-weight:800;font-size:14px}
+  .tTabs button.on{border-color:var(--accent);color:var(--accent)}
+  .premBanner{background:linear-gradient(90deg,rgba(255,200,60,.18),rgba(255,120,60,.14));border:1px solid rgba(255,200,60,.5);color:#ffe3a0;border-radius:14px;padding:11px 14px;font-size:13px;margin-bottom:14px}
+  .tCard .tp{position:absolute;top:34px;left:10px;font-size:9.5px;font-weight:900;letter-spacing:.8px;padding:2px 7px;border-radius:8px;background:linear-gradient(90deg,#ffd75e,#ff9a3c);color:#2a1700}
   /* ---------- Themes + stickers ---------- */
   .tLabel{font-size:12px;font-weight:800;letter-spacing:1px;color:var(--muted);margin:4px 2px 10px}
   .tGrid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:26px}
@@ -831,9 +841,20 @@
     <div class="ct"><div class="n">Settings</div></div>
   </header>
   <div class="sBody">
-    <div class="label">HERO THEMES</div>
-    <div class="tGrid" id="heroGrid"></div>
-    <div class="label">MAKE YOUR OWN</div>
+    <button class="acctRow themeRow" id="themeRow" type="button" style="width:100%;margin-bottom:28px;color:var(--white);text-align:left"><span style="color:var(--white);font-weight:700">🎨 Colours &amp; Themes<small id="themeCur" style="display:block;color:var(--muted);font-size:12px;margin-top:3px"></small></span><span style="color:var(--accent);font-size:24px">›</span></button>
+    <div id="themeView">
+      <div class="tTabs"><button type="button" class="on" id="tabCol">🎨 Colours</button><button type="button" id="tabPrem">✨ Premium themes</button></div>
+      <div id="paneCol">
+<div class="label">PICK A COLOUR</div>
+    <div class="swatches">
+      <button class="sw" data-t="orange"><i></i>Orange</button>
+      <button class="sw" data-t="red"><i></i>Red</button>
+      <button class="sw" data-t="pink"><i></i>Pink</button>
+      <button class="sw" data-t="blue"><i></i>Blue</button>
+      <button class="sw" data-t="green"><i></i>Green</button>
+      <button class="sw" data-t="purple"><i></i>Purple</button>
+    </div>
+<div class="label">MAKE YOUR OWN COLOUR</div>
     <div class="cuBox">
       <div class="cuPrev" id="cuPrev"><div class="a">Hey! 👋</div><div class="b">Looking good!</div></div>
       <div class="cuRow"><span>Colour</span><input type="range" id="cuH" min="0" max="360" value="25" aria-label="Colour"></div>
@@ -844,14 +865,11 @@
       <div class="cuBgs" id="cuBgs"></div>
       <div class="cuBtns"><button type="button" id="cuReset">Reset</button><button type="button" class="pri" id="cuSave">Use my theme</button></div>
     </div>
-    <div class="label">COLOURS</div>
-    <div class="swatches">
-      <button class="sw" data-t="orange"><i></i>Orange</button>
-      <button class="sw" data-t="red"><i></i>Red</button>
-      <button class="sw" data-t="pink"><i></i>Pink</button>
-      <button class="sw" data-t="blue"><i></i>Blue</button>
-      <button class="sw" data-t="green"><i></i>Green</button>
-      <button class="sw" data-t="purple"><i></i>Purple</button>
+          </div>
+      <div id="panePrem" hidden>
+<div class="premBanner">✨ Premium themes are <b>free for everyone</b> for now</div>
+    <div class="tGrid" id="heroGrid"></div>
+          </div>
     </div>
     <div class="label">SOUND</div>
     <div class="acctRow" style="margin-bottom:28px"><span>Message send sound</span><button class="smallBtn orange" id="soundToggle">On</button></div>
